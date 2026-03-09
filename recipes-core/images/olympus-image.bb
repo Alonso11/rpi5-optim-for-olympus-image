@@ -5,6 +5,7 @@ inherit core-image
 
 # Añadir soporte para WiFi, UART y herramientas de red
 IMAGE_INSTALL:append = " \
+    wifi-power-save \
     packagegroup-core-boot \
     kernel-modules \
     iw \
