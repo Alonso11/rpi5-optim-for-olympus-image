@@ -1,34 +1,45 @@
-# RPi5 Optim for Olympus Image
+# RPi5 Olympus OS - Professional Yocto Project
 
-Esta capa de Yocto Project (`meta-olympus`) está diseñada específicamente para optimizar el consumo de energía de una Raspberry Pi 5 cuando se alimenta con baterías de litio.
+Este repositorio es un **Proyecto Contenedor** diseñado para construir una imagen de Linux ultra-eficiente para la Raspberry Pi 5, optimizada para el uso con baterías de litio en el proyecto TFG Olympus.
 
-## Estructura de la Capa
+## Estructura del Proyecto
 
-*   **`conf/layer.conf`**: Registra la capa en el entorno de compilación de Yocto.
-*   **`recipes-core/images/olympus-image.bb`**: Receta de la imagen personalizada ligera, eliminando servicios innecesarios (como SSH, WiFi, Bluetooth por defecto).
-*   **`recipes-kernel/linux/files/powersave.cfg`**: Configuración del kernel para usar el gobernador de frecuencia `powersave` por defecto, maximizando el ahorro de energía.
-*   **`recipes-kernel/linux/linux-raspberrypi_%.bbappend`**: Aplica los parches y configuraciones de energía al kernel oficial de la Raspberry Pi.
+*   **\`layers/meta-olympus/\`**: Capa personalizada con optimizaciones de energía (WiFi Power Save, Kernel Powersave Governor).
+*   **\`build/conf/\`**: Archivos de configuración maestra (\`local.conf\` y \`bblayers.conf\`) con parámetros de hardware pre-configurados (CPU a 1.5GHz, LEDs desactivados, UART habilitada).
+*   **\`scripts/setup-env.sh\`**: Script de automatización para descargar todas las capas oficiales necesarias (Poky, Meta-RaspberryPi, Meta-OE).
 
-## Instalación y Compilación
+## Guía de Inicio Rápido (Google Cloud)
 
-Para usar esta capa en tu entorno de Yocto:
+Para compilar la imagen en tu máquina virtual:
 
-1.  **Añadir la capa:**
-    ```bash
-    cd ~/rpi5-yocto-project/build
-    bitbake-layers add-layer ../meta-olympus
-    ```
+1.  **Clonar este repositorio:**
+    \`\`\`bash
+    git clone https://github.com/Alonso11/rpi5-optim-for-olympus-image.git
+    cd rpi5-optim-for-olympus-image
+    \`\`\`
 
-2.  **Lanzar la compilación:**
-    ```bash
+2.  **Preparar el entorno:**
+    \`\`\`bash
+    ./scripts/setup-env.sh
+    \`\`\`
+
+3.  **Inicializar Bitbake:**
+    \`\`\`bash
+    source layers/poky/oe-init-build-env build
+    \`\`\`
+
+4.  **Compilar la imagen Olympus:**
+    \`\`\`bash
     bitbake olympus-image
-    ```
+    \`\`\`
 
-## Optimización de Energía (Próximos Pasos)
+## Optimizaciones de Energía Incluidas
 
-*   Desactivar LEDs de la placa.
-*   Desactivar salida HDMI por defecto.
-*   Ajustar el `config.txt` de la RPi5 para bajar la frecuencia máxima de la CPU.
+*   **CPU Governor:** Configurado en \`powersave\` por defecto en el kernel.
+*   **Frecuencia:** Limitada a 1.5GHz para reducir consumo térmico y eléctrico.
+*   **WiFi:** Modo \`power_save\` activado automáticamente al arranque.
+*   **Hardware:** Bluetooth y LEDs de estado desactivados para minimizar micro-amperios.
+*   **UART:** Habilitada para comunicación con Arduino Mega.
 
 ---
-Proyecto desarrollado como parte del TFG Olympus 2026.
+Proyecto TFG Olympus 2026.
