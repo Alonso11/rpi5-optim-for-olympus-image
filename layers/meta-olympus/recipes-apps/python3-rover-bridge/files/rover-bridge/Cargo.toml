@@ -1,0 +1,13 @@
+[package]
+name = "rover-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rover_bridge"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+serialport = "4.3.0"
+log = "0.4"

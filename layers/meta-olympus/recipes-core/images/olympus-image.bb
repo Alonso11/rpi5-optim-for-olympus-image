@@ -15,6 +15,7 @@ IMAGE_INSTALL:append = " \
     python3-pyserial \
     cpufrequtils \
     powertop \
+    python3-rover-bridge \
 "
 
 # Mantenemos WiFi, pero eliminamos Gráficos y Bluetooth para ahorrar energía
