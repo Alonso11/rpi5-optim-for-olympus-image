@@ -3,7 +3,7 @@ LICENSE = "MIT"
 
 inherit core-image
 
-# Añadir soporte para WiFi, UART y herramientas de red
+# Añadir soporte para WiFi, UART, SSH y herramientas de red
 IMAGE_INSTALL:append = " \
     wifi-power-save \
     packagegroup-core-boot \
@@ -16,7 +16,12 @@ IMAGE_INSTALL:append = " \
     cpufrequtils \
     powertop \
     python3-rover-bridge \
+    openssh \
+    openssh-sftp-server \
 "
+
+# Habilitar login root sin contraseña para desarrollo
+EXTRA_IMAGE_FEATURES += "debug-tweaks ssh-server-openssh"
 
 # Mantenemos WiFi, pero eliminamos Gráficos y Bluetooth para ahorrar energía
 DISTRO_FEATURES:append = " wifi"

@@ -2,7 +2,9 @@ SUMMARY = "Extensión nativa de Python en Rust para control de Rover (Olympus Br
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
-SRC_URI = "file://rover-bridge/"
+SRC_URI = "file://rover-bridge/ \
+           file://test_rover.py \
+           file://test_bridge.py"
 
 S = "${WORKDIR}/rover-bridge"
 
@@ -10,13 +12,18 @@ inherit cargo python3-dir
 
 # Dependencias para compilar la extensión nativa
 DEPENDS += "python3 python3-setuptools-native"
-RDEPENDS:${PN} += "python3-core"
+RDEPENDS:${PN} += "python3-core python3-pyserial"
 
 # Forzamos la instalación de la librería dinámica (.so) en el directorio de paquetes de Python
 do_install() {
     install -d ${D}${PYTHON_SITEPACKAGES_DIR}
     # Buscamos el archivo .so generado por Cargo y lo movemos a site-packages
     install -m 0755 ${B}/target/${CARGO_TARGET_SUBDIR}/librover_bridge.so ${D}${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so
+
+    # Instalamos los scripts de prueba en /usr/bin de la RPi
+    install -d ${D}${bindir}
+    install -m 0755 ${WORKDIR}/test_rover.py ${D}${bindir}/test_rover.py
+    install -m 0755 ${WORKDIR}/test_bridge.py ${D}${bindir}/test_bridge.py
 }
 
-FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so"
+FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so ${bindir}/test_rover.py ${bindir}/test_bridge.py"
