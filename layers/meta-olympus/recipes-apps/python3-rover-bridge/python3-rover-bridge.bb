@@ -6,18 +6,30 @@ SRC_URI = "file://rover-bridge/ \
            file://test_rover.py \
            file://test_bridge.py"
 
-# Importante: Incluir carpetas de vendor para compilacion offline
+# El código está en la subcarpeta rover-bridge
 S = "${WORKDIR}/rover-bridge"
 
-inherit cargo python3-dir
-
-# Forzamos a Cargo a usar solo las fuentes vendoreadas
-export CARGO_HOME = "${S}"
-export CARGO_OFFLINE = "1"
+inherit cargo python3native python3-dir pkgconfig
 
 # Dependencias para compilar la extensión nativa (necesita udev para serialport)
 DEPENDS += "python3 python3-setuptools-native udev"
 RDEPENDS:${PN} += "python3-core python3-pyserial udev"
+
+# Configuración para usar las fuentes vendoreadas incluidas en el repo
+do_configure:prepend() {
+    # Bitbake's cargo class expects offline crates in this specific directory
+    mkdir -p ${WORKDIR}/cargo_home/bitbake
+    # Symlink all vendored crates to where Bitbake expects them
+    if [ -d "${S}/vendor" ]; then
+        ln -sf ${S}/vendor/* ${WORKDIR}/cargo_home/bitbake/
+    fi
+}
+
+# Forzamos a Cargo a trabajar offline
+export CARGO_OFFLINE = "1"
+
+# Variables para que PyO3 encuentre el intérprete de Python correcto durante la compilación
+export PYO3_CONFIG_INTERPRETER = "${PYTHON}"
 
 # Forzamos la instalación de la librería dinámica (.so) en el directorio de paquetes de Python
 do_install() {
