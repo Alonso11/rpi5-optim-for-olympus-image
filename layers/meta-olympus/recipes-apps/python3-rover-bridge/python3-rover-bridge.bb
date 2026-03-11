@@ -6,9 +6,14 @@ SRC_URI = "file://rover-bridge/ \
            file://test_rover.py \
            file://test_bridge.py"
 
+# Importante: Incluir carpetas de vendor para compilacion offline
 S = "${WORKDIR}/rover-bridge"
 
 inherit cargo python3-dir
+
+# Forzamos a Cargo a usar solo las fuentes vendoreadas
+export CARGO_HOME = "${S}"
+export CARGO_OFFLINE = "1"
 
 # Dependencias para compilar la extensión nativa (necesita udev para serialport)
 DEPENDS += "python3 python3-setuptools-native udev"
