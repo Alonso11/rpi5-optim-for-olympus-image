@@ -18,13 +18,13 @@ def main():
     # 2. Controlar el Rover usando el método en Rust
     try:
         print("\nMoviendo motor (Rust gestiona el puerto serie)...")
-        res = rover.send_command("MOVE:FWD:100")
+        res = rover.send_command("F")
         print(f"Respuesta de Rust: {res}")
         
         time.sleep(3)
         
         print("\nDeteniendo motor...")
-        res = rover.send_command("MOVE:STOP:0")
+        res = rover.send_command("S")
         print(f"Respuesta de Rust: {res}")
         
     except Exception as e:

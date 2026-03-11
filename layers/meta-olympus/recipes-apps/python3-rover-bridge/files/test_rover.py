@@ -30,16 +30,16 @@ def main():
         choice = input("\nSeleccione comando: ").lower()
         
         if choice == '1':
-            send_command(ser, "MOVE:FWD:100")
+            send_command(ser, "F")
             print("Esperando 5 segundos...")
             time.sleep(5)
-            send_command(ser, "MOVE:STOP:0")
+            send_command(ser, "S")
         elif choice == '2':
-            send_command(ser, "MOVE:FWD:100")
+            send_command(ser, "F")
         elif choice == '3':
-            send_command(ser, "MOVE:STOP:0")
+            send_command(ser, "S")
         elif choice == 'q':
-            send_command(ser, "MOVE:STOP:0")
+            send_command(ser, "S")
             ser.close()
             break
         else:

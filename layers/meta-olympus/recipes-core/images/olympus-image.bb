@@ -2,18 +2,19 @@ SUMMARY = "Imagen Olympus: API WiFi + UART para Arduino Mega"
 LICENSE = "MIT"
 
 inherit core-image
-# Añadir soporte para WiFi, UART, SSH y herramientas de red
+# Añadir soporte para WiFi, UART, SSH, Redimensionamiento y herramientas de red
 IMAGE_INSTALL:append = " \
+    resize-rootfs \
     wifi-config \
     wifi-power-save \
     packagegroup-core-boot \
     kernel-modules \
-"
     iw \
     wpa-supplicant \
     linux-firmware-rpidistro-bcm43455 \
     python3-base \
     python3-pyserial \
+    bash \
     cpufrequtils \
     powertop \
     python3-rover-bridge \
