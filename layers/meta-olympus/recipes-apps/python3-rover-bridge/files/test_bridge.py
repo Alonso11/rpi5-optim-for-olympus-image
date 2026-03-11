@@ -7,9 +7,9 @@ def main():
     print("Probando el Puente Rust-Python (Olympus Bridge)...")
     
     # 1. Instanciar la clase Rover definida en Rust
-    # (/dev/ttyACM0 es el Arduino Mega vía USB)
+    # (/dev/arduino_mega es el Arduino Mega vía regla Udev)
     try:
-        rover = rover_bridge.Rover("/dev/ttyACM0", 115200)
+        rover = rover_bridge.Rover("/dev/arduino_mega", 115200)
         print("Instancia de Rover creada en Rust correctamente.")
     except Exception as e:
         print(f"Error al crear el objeto Rover: {e}")

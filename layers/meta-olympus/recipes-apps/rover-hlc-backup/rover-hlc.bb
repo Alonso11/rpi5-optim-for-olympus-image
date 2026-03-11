@@ -9,6 +9,10 @@ S = "${WORKDIR}/rover-hlc"
 
 inherit cargo
 
+# Necesita udev para la libreria serialport en Rust
+DEPENDS += "udev"
+RDEPENDS:${PN} += "udev"
+
 # Asegurar que se instale el binario en /usr/bin de la RPi5
 do_install:append() {
     install -d ${D}${bindir}

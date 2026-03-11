@@ -4,11 +4,13 @@ LICENSE = "MIT"
 inherit core-image
 # Añadir soporte para WiFi, UART, SSH, Redimensionamiento y herramientas de red
 IMAGE_INSTALL:append = " \
+    custom-udev-rules \
     resize-rootfs \
     wifi-config \
     wifi-power-save \
     packagegroup-core-boot \
     kernel-modules \
+    kernel-module-cdc-acm \
     iw \
     wpa-supplicant \
     linux-firmware-rpidistro-bcm43455 \

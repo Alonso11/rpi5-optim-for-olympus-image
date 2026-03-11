@@ -10,9 +10,9 @@ S = "${WORKDIR}/rover-bridge"
 
 inherit cargo python3-dir
 
-# Dependencias para compilar la extensión nativa
-DEPENDS += "python3 python3-setuptools-native"
-RDEPENDS:${PN} += "python3-core python3-pyserial"
+# Dependencias para compilar la extensión nativa (necesita udev para serialport)
+DEPENDS += "python3 python3-setuptools-native udev"
+RDEPENDS:${PN} += "python3-core python3-pyserial udev"
 
 # Forzamos la instalación de la librería dinámica (.so) en el directorio de paquetes de Python
 do_install() {

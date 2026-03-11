@@ -3,8 +3,8 @@ import serial
 import time
 import sys
 
-# Configuración del puerto USB (Arduino Mega)
-SERIAL_PORT = '/dev/ttyACM0'
+# Configuración del puerto USB (Arduino Mega vía regla Udev)
+SERIAL_PORT = '/dev/arduino_mega'
 BAUD_RATE = 115200
 
 def send_command(ser, cmd):

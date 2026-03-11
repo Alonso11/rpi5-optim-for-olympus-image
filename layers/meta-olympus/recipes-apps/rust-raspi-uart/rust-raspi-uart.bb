@@ -8,8 +8,9 @@ S = "${WORKDIR}/rust-raspi-uart"
 
 inherit cargo
 
-# Asegurar que se instalen las dependencias necesarias de C para serialport si fuera necesario
-# serialport en Linux no suele necesitar dependencias externas extras más que libc.
+# Necesita udev para la libreria serialport en Rust
+DEPENDS += "udev"
+RDEPENDS:${PN} += "udev"
 
 # Forzamos la instalación del binario en /usr/bin
 do_install:append() {

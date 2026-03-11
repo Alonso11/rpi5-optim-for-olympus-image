@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use serialport;
 
 fn main() -> Result<()> {
-    // 1. Configurar UART (Arduino via USB = /dev/ttyACM0)
-    let port_name = "/dev/ttyACM0";
+    // 1. Configurar UART (Arduino via Regla Udev = /dev/arduino_mega)
+    let port_name = "/dev/arduino_mega";
     let baud_rate = 115_200;
 
     println!("Iniciando Rover High-Level Controller en {}...", port_name);
