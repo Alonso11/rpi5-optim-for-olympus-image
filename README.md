@@ -1,4 +1,4 @@
-# RPi5 Olympus OS - Professional Yocto Project
+# RPi5 Olympus OS
 
 Este repositorio es un **Proyecto Contenedor** diseñado para construir una imagen de Linux ultra-eficiente para la Raspberry Pi 5, optimizada para el uso con baterías de litio en el proyecto TFG Olympus.
 

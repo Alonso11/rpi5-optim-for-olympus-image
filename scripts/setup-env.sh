@@ -11,21 +11,33 @@ echo "--------------------------------------------------"
 
 mkdir -p $LAYERS_DIR
 
-# Función para clonar si no existe
-clone_layer() {
+# Función para sincronizar capas (detectar, mover o clonar)
+sync_layer() {
     local url=$1
     local name=$2
+    
+    # 1. Si la capa está en el directorio superior, moverla aquí
+    if [ ! -d "$LAYERS_DIR/$name" ] && [ -d "$ROOT_DIR/../$name" ]; then
+        echo "Detectada capa existente en el directorio superior. Moviendo $name..."
+        mv "$ROOT_DIR/../$name" "$LAYERS_DIR/"
+    fi
+
+    # 2. Si no existe, clonar
     if [ ! -d "$LAYERS_DIR/$name" ]; then
         echo "Clonando $name..."
         git clone -b scarthgap $url "$LAYERS_DIR/$name"
     else
-        echo "OK: $name ya existe."
+        # 3. Si existe, actualizar
+        echo "Actualizando $name..."
+        cd "$LAYERS_DIR/$name"
+        git pull origin scarthgap
+        cd "$ROOT_DIR"
     fi
 }
 
-clone_layer https://git.yoctoproject.org/git/poky poky
-clone_layer https://git.yoctoproject.org/git/meta-raspberrypi meta-raspberrypi
-clone_layer https://github.com/openembedded/meta-openembedded.git meta-openembedded
+sync_layer https://git.yoctoproject.org/git/poky poky
+sync_layer https://git.yoctoproject.org/git/meta-raspberrypi meta-raspberrypi
+sync_layer https://github.com/openembedded/meta-openembedded.git meta-openembedded
 
 echo ""
 echo "--------------------------------------------------"
