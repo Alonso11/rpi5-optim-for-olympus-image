@@ -28,7 +28,10 @@ do_configure:prepend() {
 # Forzamos a Cargo a trabajar offline
 export CARGO_OFFLINE = "1"
 
-# Variables para que PyO3 encuentre el intérprete de Python correcto durante la compilación
+# Variables para compilación cruzada de PyO3
+export PYO3_CROSS = "1"
+export PYO3_CROSS_PYTHON_VERSION = "3.12"
+export PYO3_CROSS_LIB_DIR = "${STAGING_LIBDIR}"
 export PYO3_CONFIG_INTERPRETER = "${PYTHON}"
 
 # Forzamos la instalación de la librería dinámica (.so) en el directorio de paquetes de Python
