@@ -1,17 +1,16 @@
 use pyo3::prelude::*;
-use serialport;
 
 /// 1. Lógica pura de Rust (Testeable sin Python)
 struct RoverCore {
     state: String,
-    port_name: String,
+    _port_name: String,
 }
 
 impl RoverCore {
     fn new(port_name: String) -> Self {
         RoverCore { 
             state: "IDLE".to_string(),
-            port_name 
+            _port_name: port_name 
         }
     }
 
@@ -75,13 +74,13 @@ mod tests {
 
     #[test]
     fn test_rover_initial_state() {
-        let rover = RoverCore::new("/dev/ttyAMA0".to_string());
+        let rover = RoverCore::new("/dev/ttyACM0".to_string());
         assert_eq!(rover.get_state(), "IDLE");
     }
 
     #[test]
     fn test_rover_obstacle_logic() {
-        let mut rover = RoverCore::new("/dev/ttyAMA0".to_string());
+        let mut rover = RoverCore::new("/dev/ttyACM0".to_string());
         
         rover.update_ia_status("OBSTACLE");
         assert_eq!(rover.get_state(), "MOVE:STOP:0\n");

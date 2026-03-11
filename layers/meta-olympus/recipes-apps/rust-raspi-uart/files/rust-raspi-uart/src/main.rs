@@ -3,7 +3,7 @@ use std::time::Duration;
 use serialport;
 
 fn main() {
-    let port_name = "/dev/ttyAMA0";
+    let port_name = "/dev/ttyACM0";
     let baud_rate = 9600;
 
     let mut port = serialport::new(port_name, baud_rate)
