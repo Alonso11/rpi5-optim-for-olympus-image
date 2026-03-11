@@ -14,7 +14,7 @@ IMAGE_INSTALL:append = " \
     iw \
     wpa-supplicant \
     linux-firmware-rpidistro-bcm43455 \
-    python3-base \
+    python3-core \
     python3-pyserial \
     bash \
     cpufrequtils \
