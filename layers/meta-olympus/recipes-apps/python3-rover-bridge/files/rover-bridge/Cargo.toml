@@ -1,3 +1,4 @@
+# Version: v1.0
 [package]
 name = "rover-bridge"
 version = "0.1.0"
@@ -10,3 +11,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 serialport = "4.3.0"
+rppal = "0.22.1"
