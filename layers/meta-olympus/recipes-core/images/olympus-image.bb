@@ -1,8 +1,9 @@
-SUMMARY = "Imagen Olympus: API WiFi + UART para Arduino Mega"
+SUMMARY = "Imagen Olympus: API WiFi + UART + Sensores + Vision"
 LICENSE = "MIT"
 
 inherit core-image
-# Añadir soporte para WiFi, UART, SSH, Redimensionamiento y herramientas de red
+
+# Añadir soporte para WiFi, UART, SSH, Redimensionamiento, Sensores y Vision
 IMAGE_INSTALL:append = " \
     custom-udev-rules \
     resize-rootfs \
@@ -16,17 +17,16 @@ IMAGE_INSTALL:append = " \
     linux-firmware-rpidistro-bcm43455 \
     python3-core \
     python3-pyserial \
+    python3-opencv \
+    libcamera \
+    libcamera-apps \
+    libcamera-v4l2 \
+    v4l-utils \
+    libudev \
     bash \
     cpufrequtils \
     powertop \
     python3-rover-bridge \
-    python3-opencv 
-    libcamera 
-    libcamera-apps 
-    libcamera-v4l2 
-    v4l-utils 
-    libudev 
-
     openssh \
     openssh-sftp-server \
 "
