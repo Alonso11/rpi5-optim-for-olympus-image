@@ -20,6 +20,13 @@ IMAGE_INSTALL:append = " \
     cpufrequtils \
     powertop \
     python3-rover-bridge \
+    python3-opencv 
+    libcamera 
+    libcamera-apps 
+    libcamera-v4l2 
+    v4l-utils 
+    libudev 
+
     openssh \
     openssh-sftp-server \
 "
