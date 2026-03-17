@@ -17,10 +17,10 @@ IMAGE_INSTALL:append = " \
     linux-firmware-rpidistro-bcm43455 \
     python3-core \
     python3-pyserial \
+    python3-numpy \
     python3-opencv \
     libcamera \
     libcamera-apps \
-    libcamera-v4l2 \
     v4l-utils \
     libudev \
     bash \
