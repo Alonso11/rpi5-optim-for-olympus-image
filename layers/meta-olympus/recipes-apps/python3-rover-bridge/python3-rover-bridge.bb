@@ -5,9 +5,8 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 SRC_URI = "file://rover-bridge/ \
            file://test_rover.py \
            file://test_bridge.py \
-           file://test_bridge_interactive.py" \ ${bindir}/test_ultrasonic_rpi.py
-    install -m 0755 ${WORKDIR}/test_ultrasonic_rpi.py ${D}${bindir}/test_ultrasonic_rpi.py
-           file://test_ultrasonic_rpi.py
+           file://test_bridge_interactive.py \
+           file://test_ultrasonic_rpi.py"
 
 # El código está en la subcarpeta rover-bridge
 S = "${WORKDIR}/rover-bridge"
@@ -47,11 +46,12 @@ do_install() {
     install -d ${D}${bindir}
     install -m 0755 ${WORKDIR}/test_rover.py ${D}${bindir}/test_rover.py
     install -m 0755 ${WORKDIR}/test_bridge.py ${D}${bindir}/test_bridge.py
-    install -m 0755 ${WORKDIR}/test_bridge_interactive.py ${D}${bindir}/test_bridge_interactive.py \ ${bindir}/test_ultrasonic_rpi.py
+    install -m 0755 ${WORKDIR}/test_bridge_interactive.py ${D}${bindir}/test_bridge_interactive.py
     install -m 0755 ${WORKDIR}/test_ultrasonic_rpi.py ${D}${bindir}/test_ultrasonic_rpi.py
-           file://test_ultrasonic_rpi.py
 }
 
-FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so ${bindir}/test_rover.py ${bindir}/test_bridge.py ${bindir}/test_bridge_interactive.py" \ ${bindir}/test_ultrasonic_rpi.py
-    install -m 0755 ${WORKDIR}/test_ultrasonic_rpi.py ${D}${bindir}/test_ultrasonic_rpi.py
-           file://test_ultrasonic_rpi.py
+FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
+                ${bindir}/test_rover.py \
+                ${bindir}/test_bridge.py \
+                ${bindir}/test_bridge_interactive.py \
+                ${bindir}/test_ultrasonic_rpi.py"
