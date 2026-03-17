@@ -1,3 +1,4 @@
+// Version: v1.0
 use pyo3::prelude::*;
 use serialport;
 use std::time::Duration;
