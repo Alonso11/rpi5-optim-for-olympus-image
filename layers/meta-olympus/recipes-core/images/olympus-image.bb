@@ -1,4 +1,4 @@
-SUMMARY = "Imagen Olympus: API WiFi + UART + Sensores + Vision"
+SUMMARY = "Imagen Olympus: WiFi, UART, Sensores y Vision"
 LICENSE = "MIT"
 
 inherit core-image
