@@ -38,6 +38,8 @@ sync_layer() {
 sync_layer https://git.yoctoproject.org/git/poky poky
 sync_layer https://git.yoctoproject.org/git/meta-raspberrypi meta-raspberrypi
 sync_layer https://github.com/openembedded/meta-openembedded.git meta-openembedded
+sync_layer https://github.com/NobuoTsukamoto/meta-tensorflow-lite.git meta-tensorflow-lite
+sync_layer https://github.com/NobuoTsukamoto/meta-onnxruntime.git meta-onnxruntime
 
 echo ""
 echo "--------------------------------------------------"
