@@ -22,8 +22,7 @@ IMAGE_INSTALL:append = " \
     python3-tensorflow-lite \
     python3-onnxruntime \
     python3-pillow \
-    python3-pip 
-
+    python3-pip \
     libcamera \
     libcamera-apps \
     v4l-utils \
