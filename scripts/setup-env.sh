@@ -1,4 +1,5 @@
 #!/bin/bash
+# Version: v1.0
 # --- OLYMPUS: PREPARACION DEL ENTORNO ---
 set -e
 
@@ -38,6 +39,7 @@ sync_layer() {
 sync_layer https://git.yoctoproject.org/git/poky poky
 sync_layer https://git.yoctoproject.org/git/meta-raspberrypi meta-raspberrypi
 sync_layer https://github.com/openembedded/meta-openembedded.git meta-openembedded
+# Capas de inferencia ML (TensorFlow Lite y ONNX Runtime)
 sync_layer https://github.com/NobuoTsukamoto/meta-tensorflow-lite.git meta-tensorflow-lite
 sync_layer https://github.com/NobuoTsukamoto/meta-onnxruntime.git meta-onnxruntime
 
