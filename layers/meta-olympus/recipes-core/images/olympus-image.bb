@@ -1,3 +1,4 @@
+# Version: v1.1
 SUMMARY = "Imagen Olympus: WiFi, UART, Sensores y Vision"
 LICENSE = "MIT"
 
@@ -31,6 +32,7 @@ IMAGE_INSTALL:append = " \
     cpufrequtils \
     powertop \
     python3-rover-bridge \
+    rust-raspi-uart \
     openssh \
     openssh-sftp-server \
 "
