@@ -1,4 +1,4 @@
-# Version: v1.1
+# Version: v1.2
 SUMMARY = "Extensión nativa de Python en Rust para control de Rover (Olympus Bridge)"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
@@ -8,7 +8,8 @@ SRC_URI = "file://rover-bridge/ \
            file://test_bridge.py \
            file://test_bridge_interactive.py \
            file://test_ultrasonic_rpi.py \
-           file://test_opencv_camera.py"
+           file://test_opencv_camera.py \
+           file://olympus_controller.py"
 
 # El código está en la subcarpeta rover-bridge
 S = "${WORKDIR}/rover-bridge"
@@ -51,6 +52,7 @@ do_install() {
     install -m 0755 ${WORKDIR}/test_bridge_interactive.py ${D}${bindir}/test_bridge_interactive.py
     install -m 0755 ${WORKDIR}/test_ultrasonic_rpi.py ${D}${bindir}/test_ultrasonic_rpi.py
     install -m 0755 ${WORKDIR}/test_opencv_camera.py ${D}${bindir}/test_opencv_camera.py
+    install -m 0755 ${WORKDIR}/olympus_controller.py ${D}${bindir}/olympus_controller.py
 }
 
 FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
@@ -58,4 +60,5 @@ FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
                 ${bindir}/test_bridge.py \
                 ${bindir}/test_bridge_interactive.py \
                 ${bindir}/test_ultrasonic_rpi.py \
-                ${bindir}/test_opencv_camera.py"
+                ${bindir}/test_opencv_camera.py \
+                ${bindir}/olympus_controller.py"
