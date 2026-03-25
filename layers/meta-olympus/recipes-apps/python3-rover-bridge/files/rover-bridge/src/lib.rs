@@ -1,8 +1,8 @@
-// Version: v1.1
+// Version: v1.2
 use pyo3::prelude::*;
 use serialport;
 use std::time::{Duration, Instant};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::Mutex;
 use rppal::gpio::{Gpio, InputPin, OutputPin};
 
@@ -99,19 +99,50 @@ impl Rover {
         }
     }
 
-    /// Envía un comando al Arduino y retorna éxito o error
+    /// Envía un comando MSM al Arduino y retorna la respuesta ASCII.
+    /// Protocolo: envía "<cmd>\n", lee hasta '\n' (timeout 300 ms).
+    /// Respuestas esperadas: PONG, ACK:<STATE>, TLM:<SAFETY>:<MASK>, ERR:*
     fn send_command(&self, cmd: String) -> PyResult<String> {
         let mut port = self.port.lock()
-            .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("No se pudo bloquear el puerto serie (Mutex error)"))?;
+            .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Mutex error en puerto serie"))?;
 
+        // 1. Enviar comando con terminador de línea
         let formatted_cmd = format!("{}\n", cmd);
         port.write_all(formatted_cmd.as_bytes())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Error escritura: {}", e)))?;
-        
         port.flush()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Error flush: {}", e)))?;
 
-        Ok(format!("Enviado: {}", cmd))
+        // 2. Leer respuesta byte a byte hasta '\n' o timeout de 300 ms
+        let mut response = Vec::with_capacity(24);
+        let mut buf = [0u8; 1];
+        let deadline = Instant::now() + Duration::from_millis(300);
+
+        loop {
+            if Instant::now() >= deadline {
+                return Err(PyErr::new::<pyo3::exceptions::PyTimeoutError, _>(
+                    format!("Timeout esperando respuesta a '{}'", cmd)
+                ));
+            }
+            match port.read(&mut buf) {
+                Ok(1) => {
+                    if buf[0] == b'\n' { break; }
+                    response.push(buf[0]);
+                }
+                Ok(_) => continue,
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+                Err(e) => return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                    format!("Error lectura: {}", e)
+                )),
+            }
+        }
+
+        // 3. Convertir a String (quitar posible '\r')
+        let resp_str = String::from_utf8_lossy(&response)
+            .trim_end_matches('\r')
+            .to_string();
+
+        Ok(resp_str)
     }
 }
 
