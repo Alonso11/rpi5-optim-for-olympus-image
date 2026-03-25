@@ -6,7 +6,7 @@
 SUMMARY = "Raspberry Pi PiSP tuning and configuration library"
 HOMEPAGE = "https://github.com/raspberrypi/libpisp"
 LICENSE = "BSD-2-Clause"
-LIC_FILES_CHKSUM = "file://LICENSE;md5=f836cc7e4b4a83f710b5ee83f36d45da"
+LIC_FILES_CHKSUM = "file://LICENSE;md5=3417a46e992fdf62e5759fba9baef7a7"
 
 inherit meson pkgconfig
 
