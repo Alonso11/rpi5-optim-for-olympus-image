@@ -71,3 +71,6 @@ layers/meta-openembedded/
 layers/meta-raspberrypi/
 layers/meta-tensorflow-lite/
 layers/poky/
+
+# Rust build artifacts
+**/target/

@@ -1,4 +1,4 @@
-// Version: v1.2
+// Version: v1.3
 use pyo3::prelude::*;
 use serialport;
 use std::time::{Duration, Instant};
@@ -6,10 +6,25 @@ use std::io::{Read, Write};
 use std::sync::Mutex;
 use rppal::gpio::{Gpio, InputPin, OutputPin};
 
+// ─── Nota de arquitectura — sensor ultrasónico HC-SR04 ────────────────────────
+//
+// El HC-SR04 del Rover Olympus está conectado físicamente al Arduino Mega
+// (D38=Trigger, D39=Echo). La capa de emergencia (<20 cm → FAULT) se ejecuta
+// en el firmware LLC (main.rs) cada 5 ciclos (~100 ms), y se comunica a la RPi5
+// a través del protocolo MSM serie (respuesta TLM o transición a FAULT).
+//
+// Los campos `ultrasonic_trigger` / `ultrasonic_echo` y los métodos
+// `setup_ultrasonic` / `get_ultrasonic_distance` de esta clase están pensados
+// para un escenario futuro en el que se conecte un segundo HC-SR04 directamente
+// a los GPIO de la RPi5 (ej. capa táctica de medio alcance independiente del LLC).
+// Mientras ese hardware no esté presente, estos métodos no deben llamarse.
+//
+// ──────────────────────────────────────────────────────────────────────────────
+
 #[pyclass]
 struct Rover {
     port: Mutex<Box<dyn serialport::SerialPort>>,
-    // Sensores opcionales (se inicializan con setup_*)
+    // Pines GPIO RPi5 para HC-SR04 secundario (futuro — ver nota de arquitectura)
     ultrasonic_trigger: Mutex<Option<OutputPin>>,
     ultrasonic_echo: Mutex<Option<InputPin>>,
 }
@@ -35,7 +50,9 @@ impl Rover {
         })
     }
 
-    /// Configura los pines del sensor ultrasónico HC-SR04
+    /// [FUTURO] Configura un HC-SR04 conectado directamente a los GPIO de la RPi5.
+    /// NOTA: El HC-SR04 activo del rover está en el Arduino (D38/D39).
+    ///       Este método es para un segundo sensor en GPIO RPi5 (no instalado aún).
     fn setup_ultrasonic(&self, trigger_pin: u8, echo_pin: u8) -> PyResult<String> {
         let gpio = Gpio::new()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Error GPIO: {}", e)))?;
@@ -60,7 +77,8 @@ impl Rover {
         Ok(format!("Ultrasonico configurado: Trig={}, Echo={}", trigger_pin, echo_pin))
     }
 
-    /// Mide la distancia en milímetros (mm)
+    /// [FUTURO] Mide la distancia en mm desde el HC-SR04 en GPIO RPi5.
+    /// NOTA: Requiere llamar setup_ultrasonic primero. No aplica al sensor del Arduino.
     fn get_ultrasonic_distance(&self) -> PyResult<Option<f64>> {
         let mut t_lock = self.ultrasonic_trigger.lock().unwrap();
         let e_lock = self.ultrasonic_echo.lock().unwrap();
