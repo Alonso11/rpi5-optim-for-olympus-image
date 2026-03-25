@@ -229,6 +229,16 @@ class VisionSource:
         pass  # No persistent process to clean up with rpicam-still
 
 
+# ─── Dry-run mock ────────────────────────────────────────────────────────────
+
+class DryRunRover:
+    """Prints commands to stdout instead of sending them to the Arduino."""
+
+    def send_command(self, cmd):
+        print(f"  [DRY-RUN] would send: {cmd}")
+        return "OK (simulated)"
+
+
 # ─── Main loop ───────────────────────────────────────────────────────────────
 
 def run(rover, source, mode):
@@ -303,15 +313,24 @@ def main():
         default=115200,
         help="Baud rate (default: 115200)"
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Skip Arduino connection; print commands to stdout (testing without hardware)"
+    )
     args = parser.parse_args()
 
-    print(f"[Controller] Connecting to Arduino on {args.port} @ {args.baud}...")
-    try:
-        rover = rover_bridge.Rover(args.port, args.baud)
-        print("[Controller] Connected.")
-    except Exception as e:
-        print(f"[ERROR] Cannot open rover bridge: {e}")
-        sys.exit(1)
+    if args.dry_run:
+        print("[Controller] DRY-RUN mode — Arduino not required.")
+        rover = DryRunRover()
+    else:
+        print(f"[Controller] Connecting to Arduino on {args.port} @ {args.baud}...")
+        try:
+            rover = rover_bridge.Rover(args.port, args.baud)
+            print("[Controller] Connected.")
+        except Exception as e:
+            print(f"[ERROR] Cannot open rover bridge: {e}")
+            sys.exit(1)
 
     if args.mode == "manual":
         source = ManualSource()
