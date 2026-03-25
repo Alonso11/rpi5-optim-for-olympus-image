@@ -16,6 +16,9 @@ SRCREV = "fe601eb6ffe02922ff980c60621dd79d401d9061"
 PACKAGECONFIG:remove = "raspberrypi"
 EXTRA_OECMAKE:append = " -Dpipelines=rpi/vc4,rpi/pisp -Dipas=rpi/vc4,rpi/pisp -Dcpp_args=-Wno-unaligned-access"
 
+# libpisp is required at build time (pisp pipeline) and runtime (ipa_rpi_pisp.so)
+DEPENDS:append = " libpisp"
+
 # Fix: meta-openembedded FILES only covers vc4 IPA. Include pisp IPA module and
 # its tuning files so RPi5 cameras are detected by libcamera at runtime.
 FILES:${PN} += " \

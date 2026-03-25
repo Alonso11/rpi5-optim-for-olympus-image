@@ -22,6 +22,7 @@ IMAGE_INSTALL:append = " \
     python3-opencv \
     python3-pillow \
     python3-pip \
+    libpisp \
     libcamera \
     libcamera-apps \
     v4l-utils \
