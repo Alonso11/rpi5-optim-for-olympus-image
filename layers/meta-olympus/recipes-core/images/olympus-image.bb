@@ -1,4 +1,4 @@
-# Version: v1.2
+# Version: v1.3
 SUMMARY = "Imagen Olympus: WiFi, UART, Sensores y Vision"
 LICENSE = "MIT"
 
@@ -40,3 +40,6 @@ EXTRA_IMAGE_FEATURES += "debug-tweaks ssh-server-openssh"
 # Mantenemos WiFi, pero eliminamos Gráficos y Bluetooth para ahorrar energía
 DISTRO_FEATURES:append = " wifi"
 DISTRO_FEATURES:remove = "x11 wayland vulkan opengl bluetooth"
+
+# Cámara IMX219 de terceros (sin EEPROM): necesita dtoverlay explícito
+RPI_EXTRA_CONFIG += "dtoverlay=imx219"
