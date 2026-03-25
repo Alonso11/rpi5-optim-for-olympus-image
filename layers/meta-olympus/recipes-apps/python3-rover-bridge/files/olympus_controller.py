@@ -108,6 +108,10 @@ class VisionSource:
     Reads frames from the CSI camera and decides MSM commands via cv2.dnn.
     Model: YOLOv8n exported to ONNX (opset 12).
 
+    Frame capture uses rpicam-vid (MJPEG over stdout) instead of
+    cv2.VideoCapture, because RPi5/pisp V4L2 nodes are raw CSI capture
+    nodes that cannot be opened directly by OpenCV.
+
     Decision logic based on bounding box position in the frame:
       Left zone  (0–33%)   → AVD:R  (obstacle on left, turn right)
       Center zone (33–67%) → RET    (obstacle ahead, retreat)
@@ -119,8 +123,10 @@ class VisionSource:
         try:
             import cv2
             import numpy as np
-            self._cv2 = cv2
-            self._np  = np
+            import subprocess
+            self._cv2        = cv2
+            self._np         = np
+            self._subprocess = subprocess
         except ImportError:
             print("[ERROR] OpenCV not found. Install python3-opencv.")
             raise SystemExit(1)
@@ -129,24 +135,53 @@ class VisionSource:
         self._net = self._cv2.dnn.readNetFromONNX(model_path)
         print(f"[Vision] Model loaded — {len(self._net.getLayerNames())} layers")
 
-        self._cap = self._cv2.VideoCapture(0, self._cv2.CAP_V4L2)
-        self._cap.set(self._cv2.CAP_PROP_FRAME_WIDTH,  FRAME_WIDTH)
-        self._cap.set(self._cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        cmd = [
+            "rpicam-vid",
+            "--codec", "mjpeg",
+            "--output", "-",
+            "--width",  str(FRAME_WIDTH),
+            "--height", str(FRAME_HEIGHT),
+            "--framerate", "10",
+            "--timeout", "0",
+            "--nopreview",
+        ]
+        self._proc = self._subprocess.Popen(
+            cmd, stdout=self._subprocess.PIPE, stderr=self._subprocess.DEVNULL
+        )
+        self._buf = b""
 
-        if not self._cap.isOpened():
-            print("[ERROR] Cannot open camera. Check CSI connection.")
-            raise SystemExit(1)
-
-        print("[Vision] Camera open. Warming up (2s)...")
+        print("[Vision] Camera open (rpicam-vid MJPEG). Warming up (2s)...")
         time.sleep(2)
+
+    def _read_frame(self):
+        """
+        Read one MJPEG frame from rpicam-vid stdout.
+        Returns a BGR numpy array or None on error.
+        """
+        np  = self._np
+        cv2 = self._cv2
+
+        while True:
+            chunk = self._proc.stdout.read(4096)
+            if not chunk:
+                return None
+            self._buf += chunk
+
+            start = self._buf.find(b"\xff\xd8")
+            end   = self._buf.find(b"\xff\xd9", start + 2 if start != -1 else 0)
+            if start != -1 and end != -1:
+                jpg = self._buf[start:end + 2]
+                self._buf = self._buf[end + 2:]
+                frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+                return frame
 
     def next_command(self):
         """
         Captures a frame, runs inference, and returns an MSM command.
         Returns None on camera read error (caller will send STB).
         """
-        ret, frame = self._cap.read()
-        if not ret:
+        frame = self._read_frame()
+        if frame is None:
             print("[Vision] Frame capture failed.")
             return None
 
@@ -204,8 +239,8 @@ class VisionSource:
             return "RET"         # Obstacle center → retreat
 
     def release(self):
-        if self._cap.isOpened():
-            self._cap.release()
+        self._proc.terminate()
+        self._proc.wait()
 
 
 # ─── Main loop ───────────────────────────────────────────────────────────────
