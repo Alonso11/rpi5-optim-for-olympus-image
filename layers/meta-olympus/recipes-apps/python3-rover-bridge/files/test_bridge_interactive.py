@@ -20,7 +20,7 @@ def main():
         time.sleep(2)
     except Exception as e:
         print(f"Error al crear el objeto Rover: {e}")
-        print("Sugerencia: Prueba con --port /dev/ttyUSB0 o verifica permisos (sudo).")
+        print("Sugerencia: Verifica que el Arduino esté conectado (/dev/arduino_mega) y permisos (sudo).")
         sys.exit(1)
 
     print("\n--- Control Manual del Rover (Rust Bridge) ---")

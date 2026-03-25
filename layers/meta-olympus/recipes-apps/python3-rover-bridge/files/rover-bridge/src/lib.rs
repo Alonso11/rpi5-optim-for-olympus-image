@@ -1,4 +1,4 @@
-// Version: v1.0
+// Version: v1.1
 use pyo3::prelude::*;
 use serialport;
 use std::time::{Duration, Instant};
@@ -17,7 +17,8 @@ struct Rover {
 #[pymethods]
 impl Rover {
     #[new]
-    fn new(port_name: String, baud_rate: u32) -> PyResult<Self> {
+    #[pyo3(signature = (port_name="/dev/arduino_mega", baud_rate=115200))]
+    fn new(port_name: &str, baud_rate: u32) -> PyResult<Self> {
         let port = serialport::new(&port_name, baud_rate)
             .timeout(Duration::from_millis(100))
             .open()
