@@ -19,7 +19,7 @@ impl Rover {
     #[new]
     #[pyo3(signature = (port_name="/dev/arduino_mega", baud_rate=115200))]
     fn new(port_name: &str, baud_rate: u32) -> PyResult<Self> {
-        let port = serialport::new(&port_name, baud_rate)
+        let port = serialport::new(port_name, baud_rate)
             .timeout(Duration::from_millis(100))
             .open()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Error serial al abrir {}: {}", port_name, e)))?;
