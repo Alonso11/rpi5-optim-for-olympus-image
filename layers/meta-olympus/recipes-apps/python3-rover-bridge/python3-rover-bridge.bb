@@ -9,7 +9,8 @@ SRC_URI = "file://rover-bridge/ \
            file://test_bridge_interactive.py \
            file://test_ultrasonic_rpi.py \
            file://test_opencv_camera.py \
-           file://olympus_controller.py"
+           file://olympus_controller.py \
+           file://yolov8n.onnx"
 
 # El código está en la subcarpeta rover-bridge
 S = "${WORKDIR}/rover-bridge"
@@ -53,6 +54,9 @@ do_install() {
     install -m 0755 ${WORKDIR}/test_ultrasonic_rpi.py ${D}${bindir}/test_ultrasonic_rpi.py
     install -m 0755 ${WORKDIR}/test_opencv_camera.py ${D}${bindir}/test_opencv_camera.py
     install -m 0755 ${WORKDIR}/olympus_controller.py ${D}${bindir}/olympus_controller.py
+
+    install -d ${D}${datadir}/olympus/models
+    install -m 0644 ${WORKDIR}/yolov8n.onnx ${D}${datadir}/olympus/models/yolov8n.onnx
 }
 
 FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
@@ -61,4 +65,5 @@ FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
                 ${bindir}/test_bridge_interactive.py \
                 ${bindir}/test_ultrasonic_rpi.py \
                 ${bindir}/test_opencv_camera.py \
-                ${bindir}/olympus_controller.py"
+                ${bindir}/olympus_controller.py \
+                ${datadir}/olympus/models/yolov8n.onnx"
