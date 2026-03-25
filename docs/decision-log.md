@@ -115,13 +115,27 @@ el inicio del proyecto.
 
 ---
 
-## Pendiente (al 24 mar 2026)
+## Semana 3 — Modelo ONNX + cámara CSI (24–25 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-24 | Exportar `yolov8n.pt` → `yolov8n.onnx` con ultralytics (opset 12, 12.3 MB) | opset 12 es el máximo compatible con `cv2.dnn`; el modelo nano es el más ligero para inferencia en CPU |
+| 2026-03-24 | Empaquetar `yolov8n.onnx` en la imagen via `python3-rover-bridge.bb` | Instala en `/usr/share/olympus/models/yolov8n.onnx` — ruta hardcodeada en `olympus_controller.py` |
+| 2026-03-25 | Añadir `dtoverlay=imx219` a `config.txt` para cámara IMX219 de terceros | Las cámaras de terceros no tienen EEPROM — `camera_auto_detect=1` no las detecta; hay que forzar el overlay |
+| 2026-03-25 | Cambiar SRC_URI de libcamera al fork de Raspberry Pi Foundation (fe601eb) | El paquete `libcamera_0.4.0` de meta-openembedded solo incluye el pipeline `rpi/vc4` (RPi4). RPi5 requiere `rpi/pisp` que solo está en el fork RPi. Sin pisp, `libcamera-hello --list-cameras` devuelve vacío aunque `dmesg` detecte el sensor (Error -121 en I2C no era el problema real) |
+| 2026-03-25 | Descartado TF-Luna para el TFG | Requeriría USART2 (D16/D17) en el firmware Arduino y añadir capa táctica a la MSM; complejidad no justificada para el alcance del TFG. Queda documentado como trabajo futuro |
+
+---
+
+## Pendiente (al 25 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
 |---|---|---|
 | ~~Limpiar `onnxruntime` de IMAGE_INSTALL y `bblayers.conf`~~ | ✅ Hecho | — |
-| Exportar YOLOv8n a ONNX y verificar con cv2.dnn | Ninguno | Media |
-| Implementar `olympus_controller.py` modo manual | Ninguno | Media |
-| Integrar TF-Luna en firmware Arduino | Sin acceso al hardware | Baja |
-| Flash firmware LLC al Arduino y probar protocolo MSM | Sin acceso al hardware | Alta (bloqueante para pruebas reales) |
-| PR `feature/msm-main-integration` → `debug` en LLC repo | Flash pendiente | Media |
+| ~~Exportar YOLOv8n a ONNX~~ | ✅ Hecho | — |
+| ~~Implementar `olympus_controller.py` (manual + vision)~~ | ✅ Hecho | — |
+| ~~PR `feature/msm-main-integration` → `debug` en LLC repo~~ | ✅ PR #1 abierto | — |
+| Build `olympus-image` con libcamera RPi fork (pisp) | En progreso (VM) | Alta |
+| Flash firmware LLC al Arduino y probar protocolo MSM | Sin hardware conectado | Alta (bloqueante) |
+| Verificar `libcamera-hello --list-cameras` con imagen nueva | Build pisp pendiente | Alta |
+| Probar `olympus_controller.py --mode vision` con cámara real | libcamera pisp + flash LLC | Alta |
