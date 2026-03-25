@@ -10,6 +10,9 @@ RPI_EXTRA_CONFIG += "${@'dtoverlay=imx219\ndtoverlay=ov5647'}"
 # after ours, overriding our setting. We strip all occurrences in do_install
 # and append camera_auto_detect=0 last so it is the definitive value.
 do_install:append() {
-    sed -i '/camera_auto_detect/d' ${D}${BOOTFILES_DIR}/config.txt
-    echo "camera_auto_detect=0" >> ${D}${BOOTFILES_DIR}/config.txt
+    config_file=$(find ${D} -name "config.txt" 2>/dev/null | head -n 1)
+    if [ -n "$config_file" ]; then
+        sed -i '/camera_auto_detect/d' "$config_file"
+        echo "camera_auto_detect=0" >> "$config_file"
+    fi
 }
