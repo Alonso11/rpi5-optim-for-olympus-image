@@ -19,10 +19,12 @@ EXTRA_OECMAKE:append = " -Dpipelines=rpi/vc4,rpi/pisp -Dipas=rpi/vc4,rpi/pisp -D
 # libpisp is required at build time (pisp pipeline) and runtime (ipa_rpi_pisp.so)
 DEPENDS:append = " libpisp"
 
-# Fix: meta-openembedded FILES only covers vc4 IPA. Include pisp IPA module and
-# its tuning files so RPi5 cameras are detected by libcamera at runtime.
+# Fix: meta-openembedded FILES only covers vc4 IPA. Include pisp IPA module,
+# its tuning files, and the V4L2 compat library so RPi5 cameras work at runtime.
+# libcamera-v4l2.so is needed for LD_PRELOAD to allow OpenCV VideoCapture on RPi5.
 FILES:${PN} += " \
     ${libdir}/libcamera/ipa/ipa_rpi_pisp.so \
     ${libdir}/libcamera/ipa/ipa_rpi_pisp.so.sign \
     ${datadir}/libcamera/ipa/rpi/pisp/ \
+    ${libdir}/libcamera-v4l2.so \
 "
