@@ -25,4 +25,10 @@ EXTRA_OEMESON:append = " \
 "
 
 # Fix: capture any .so version instead of hardcoding 1.4.2
-FILES:${PN} += "${libdir}/rpicam_app.so.*"
+# Also include new files added in rpicam-apps HEAD (preview/postproc plugins + assets)
+FILES:${PN} += " \
+    ${libdir}/rpicam_app.so.* \
+    ${libdir}/rpicam-apps-preview/ \
+    ${libdir}/rpicam-apps-postproc/ \
+    ${datadir}/rpi-camera-assets/ \
+"
