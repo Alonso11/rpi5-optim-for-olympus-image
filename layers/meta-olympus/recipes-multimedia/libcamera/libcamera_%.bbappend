@@ -26,5 +26,5 @@ FILES:${PN} += " \
     ${libdir}/libcamera/ipa/ipa_rpi_pisp.so \
     ${libdir}/libcamera/ipa/ipa_rpi_pisp.so.sign \
     ${datadir}/libcamera/ipa/rpi/pisp/ \
-    ${libdir}/libcamera-v4l2.so \
+    ${libexecdir}/libcamera/v4l2-compat.so \
 "
