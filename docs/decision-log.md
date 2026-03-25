@@ -106,11 +106,20 @@ el inicio del proyecto.
 
 ---
 
+## Semana 3 — Limpieza de dependencias ML (24 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-24 | Eliminar `onnxruntime` de `IMAGE_INSTALL` en `olympus-image.bb` | `meta-onnxruntime` no está clonado; `cv2.dnn` (incluido en python3-opencv) carga modelos ONNX directamente |
+| 2026-03-24 | Eliminar `meta-tensorflow-lite` y `meta-onnxruntime` de `bblayers.conf` | Las layers no existen en el repo — bitbake falla al no encontrar los directorios |
+
+---
+
 ## Pendiente (al 24 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
 |---|---|---|
-| Limpiar `onnxruntime` de IMAGE_INSTALL y `bblayers.conf` | Ninguno | Alta — evita errores de build |
+| ~~Limpiar `onnxruntime` de IMAGE_INSTALL y `bblayers.conf`~~ | ✅ Hecho | — |
 | Exportar YOLOv8n a ONNX y verificar con cv2.dnn | Ninguno | Media |
 | Implementar `olympus_controller.py` modo manual | Ninguno | Media |
 | Integrar TF-Luna en firmware Arduino | Sin acceso al hardware | Baja |

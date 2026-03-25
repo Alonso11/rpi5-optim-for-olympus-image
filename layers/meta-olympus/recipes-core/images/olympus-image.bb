@@ -1,4 +1,4 @@
-# Version: v1.1
+# Version: v1.2
 SUMMARY = "Imagen Olympus: WiFi, UART, Sensores y Vision"
 LICENSE = "MIT"
 
@@ -20,7 +20,6 @@ IMAGE_INSTALL:append = " \
     python3-pyserial \
     python3-numpy \
     python3-opencv \
-    onnxruntime \
     python3-pillow \
     python3-pip \
     libcamera \
