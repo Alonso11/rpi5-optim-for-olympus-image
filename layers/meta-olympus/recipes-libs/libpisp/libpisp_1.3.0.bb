@@ -10,9 +10,9 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=f836cc7e4b4a83f710b5ee83f36d45da"
 
 inherit meson pkgconfig
 
-SRC_URI = "git://github.com/raspberrypi/libpisp.git;protocol=https;nobranch=1"
+SRC_URI = "git://github.com/raspberrypi/libpisp.git;protocol=https;branch=main"
 SRCREV = "${AUTOREV}"
-PV = "1.3.0"
+PV = "1.3.0+git${SRCPV}"
 
 S = "${WORKDIR}/git"
 
