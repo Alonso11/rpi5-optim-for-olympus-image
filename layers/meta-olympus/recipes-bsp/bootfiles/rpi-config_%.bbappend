@@ -1,10 +1,10 @@
-# Load overlays for both supported CSI cameras so either can be connected.
-# Each dtoverlay must be on its own line in config.txt — RPI_EXTRA_CONFIG uses
-# += which joins with spaces, so we embed newlines via a Python expression.
-# camera_auto_detect=0: generic modules (no EEPROM) are not auto-detected;
-# explicit dtoverlays are required.
+# Load one overlay per CSI port so either camera can be connected without
+# changing config.txt. libcamera detects which sensor is physically present.
+#   CAM0 (right connector) = CSI1 / 1f00110000 / i2c@88000
+#   CAM1 (left connector)  = CSI0 / 1f00128000 / i2c@80000
+# camera_auto_detect=0: generic modules have no EEPROM; explicit overlays required.
 # RPI_EXTRA_CONFIG must be set here (rpi-config scope), not in the image recipe.
-RPI_EXTRA_CONFIG += "${@'dtoverlay=imx219\ndtoverlay=ov5647'}"
+RPI_EXTRA_CONFIG += "${@'dtoverlay=imx219,cam0\ndtoverlay=ov5647,cam1'}"
 
 # meta-raspberrypi appends camera_auto_detect=1 via its own RPI_EXTRA_CONFIG
 # after ours, overriding our setting. We strip all occurrences in do_install

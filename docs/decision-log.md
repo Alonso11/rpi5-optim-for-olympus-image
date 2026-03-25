@@ -127,6 +127,56 @@ el inicio del proyecto.
 
 ---
 
+## Semana 3 — Debugging cámara CSI IMX219 en RPi5 (25 mar 2026)
+
+### Problema: pisp-fe /dev/video4 dequeue timeout (1 segundo)
+
+La cámara era detectada por I2C y libcamera configuraba todo el pipeline correctamente,
+pero `rpicam-still` fallaba siempre con `Camera frontend has timed out!`.
+
+**Diagnóstico paso a paso:**
+
+| Síntoma | Causa | Fix |
+|---|---|---|
+| `libcamera-hello` sin cámaras | Faltaban pisp IPA files en el paquete | `FILES` en `libcamera_%.bbappend` ampliado con `ipa_rpi_pisp.so` y `pisp/` tuning dir |
+| `camera_auto_detect=1` en config.txt después de build | `meta-raspberrypi` añade su propio `RPI_EXTRA_CONFIG` con `=1` después del nuestro | `do_install:append` con `find + sed` para eliminar todas las ocurrencias y añadir `=0` al final |
+| `/dev/dma_heap/linux,cma` no existe | `CONFIG_DMABUF_HEAPS_CMA` no habilitado | `camera.cfg` kernel fragment con los tres `CONFIG_DMABUF_HEAPS*=y` |
+| Conflicto de formatos 640x480 vs 1640x1232 | `dtoverlay=ov5647` cargado en el mismo puerto que `imx219` | Eliminar `dtoverlay=ov5647` del `RPI_EXTRA_CONFIG` |
+| Timeout persiste pese a todo lo anterior | `dtoverlay=imx219` (sin parámetro) configura **CAM1** (conector izquierdo, CSI0/1f00128000/i2c@80000), pero la cámara está en **CAM0** (conector derecho, CSI1/1f00110000/i2c@88000) | `dtoverlay=imx219,cam0` |
+
+### Mapa de conectores RPi5
+
+| Conector | Etiqueta RPi5 | dtoverlay param | CSI addr | I2C adapter |
+|---|---|---|---|---|
+| Derecho (desde arriba) | CAM0 | `cam0` | `1f00110000` | i2c@88000 |
+| Izquierdo (desde arriba) | CAM1 | `cam1` (default) | `1f00128000` | i2c@80000 |
+
+La numeración es contra-intuitiva: CAM0 es el conector de la derecha.
+
+### Detección automática sin EEPROM
+
+Con `camera_auto_detect=0` no es posible para módulos genéricos. La solución es cargar
+un overlay por puerto, dejando que el kernel haga probe de ambos:
+
+```
+dtoverlay=imx219,cam0
+dtoverlay=ov5647,cam1
+```
+
+Libcamera detecta automáticamente cuál está físicamente conectado.
+
+### Estado final
+
+- IMX219 genérico en CAM0 → **30 fps estable** con `rpicam-still` y `test_opencv_camera.py`.
+- `olympus_controller.py --mode vision` falla solo por falta de Arduino (rover_bridge), no por la cámara.
+
+| Decisión | Motivo |
+|---|---|
+| `dtoverlay=imx219,cam0` como overlay por defecto en `rpi-config_%.bbappend` | CAM0 es el conector donde está montada la cámara en el rover |
+| Documentar ambos overlays para detección automática | Permite conectar IMX219 o OV5647 en el puerto correcto sin cambiar config |
+
+---
+
 ## Pendiente (al 25 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
@@ -135,7 +185,8 @@ el inicio del proyecto.
 | ~~Exportar YOLOv8n a ONNX~~ | ✅ Hecho | — |
 | ~~Implementar `olympus_controller.py` (manual + vision)~~ | ✅ Hecho | — |
 | ~~PR `feature/msm-main-integration` → `debug` en LLC repo~~ | ✅ PR #1 abierto | — |
-| Build `olympus-image` con libcamera RPi fork (pisp) | En progreso (VM) | Alta |
+| ~~Verificar cámara IMX219 con rpicam-still~~ | ✅ 30 fps estable en CAM0 | — |
+| ~~Verificar test_opencv_camera.py~~ | ✅ Funciona | — |
+| Rebuild Yocto con `dtoverlay=imx219,cam0` (fix ya en recipe) | Requiere build en GCP VM | Media |
 | Flash firmware LLC al Arduino y probar protocolo MSM | Sin hardware conectado | Alta (bloqueante) |
-| Verificar `libcamera-hello --list-cameras` con imagen nueva | Build pisp pendiente | Alta |
-| Probar `olympus_controller.py --mode vision` con cámara real | libcamera pisp + flash LLC | Alta |
+| Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
