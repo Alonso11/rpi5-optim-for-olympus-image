@@ -134,53 +134,40 @@ class VisionSource:
         print(f"[Vision] Loading model: {model_path}")
         self._net = self._cv2.dnn.readNetFromONNX(model_path)
         print(f"[Vision] Model loaded — {len(self._net.getLayerNames())} layers")
+        print("[Vision] Camera ready (rpicam-still per-frame capture).")
 
-        cmd = [
-            "rpicam-vid",
-            "--codec", "mjpeg",
-            "--output", "-",
-            "--width",  str(FRAME_WIDTH),
-            "--height", str(FRAME_HEIGHT),
-            "--framerate", "10",
-            "--timeout", "0",
-            "--nopreview",
-        ]
-        self._proc = self._subprocess.Popen(
-            cmd, stdout=self._subprocess.PIPE, stderr=self._subprocess.DEVNULL
-        )
-        self._buf = b""
-
-        print("[Vision] Camera open (rpicam-vid MJPEG). Warming up (2s)...")
-        time.sleep(2)
-
-    def _read_frame(self):
+    def _capture_frame(self):
         """
-        Read one MJPEG frame from rpicam-vid stdout.
+        Capture one JPEG via rpicam-still --output -.
         Returns a BGR numpy array or None on error.
+        rpicam-vid MJPEG stdout did not flush reliably on RPi5/pisp;
+        rpicam-still is simpler and sufficient for ~1–2 Hz inference.
         """
-        np  = self._np
-        cv2 = self._cv2
-
-        while True:
-            chunk = self._proc.stdout.read(4096)
-            if not chunk:
-                return None
-            self._buf += chunk
-
-            start = self._buf.find(b"\xff\xd8")
-            end   = self._buf.find(b"\xff\xd9", start + 2 if start != -1 else 0)
-            if start != -1 and end != -1:
-                jpg = self._buf[start:end + 2]
-                self._buf = self._buf[end + 2:]
-                frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
-                return frame
+        result = self._subprocess.run(
+            [
+                "rpicam-still",
+                "--output", "-",
+                "--width",  str(FRAME_WIDTH),
+                "--height", str(FRAME_HEIGHT),
+                "--timeout", "1000",
+                "--nopreview",
+                "--encoding", "jpg",
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return None
+        return self._cv2.imdecode(
+            self._np.frombuffer(result.stdout, self._np.uint8),
+            self._cv2.IMREAD_COLOR,
+        )
 
     def next_command(self):
         """
         Captures a frame, runs inference, and returns an MSM command.
         Returns None on camera read error (caller will send STB).
         """
-        frame = self._read_frame()
+        frame = self._capture_frame()
         if frame is None:
             print("[Vision] Frame capture failed.")
             return None
@@ -239,8 +226,7 @@ class VisionSource:
             return "RET"         # Obstacle center → retreat
 
     def release(self):
-        self._proc.terminate()
-        self._proc.wait()
+        pass  # No persistent process to clean up with rpicam-still
 
 
 # ─── Main loop ───────────────────────────────────────────────────────────────
