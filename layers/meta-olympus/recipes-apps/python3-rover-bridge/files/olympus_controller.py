@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.1
+# Version: v0.2
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -229,21 +229,91 @@ class VisionSource:
         pass  # No persistent process to clean up with rpicam-still
 
 
+# ─── Response parser ─────────────────────────────────────────────────────────
+
+# Kinds returned by parse_response():
+#   "pong"        — PING keepalive reply
+#   "ack"         — ACK:<STATE>  data = state string ("STB","EXP","AVD","RET","FLT")
+#   "err_estop"   — ERR:ESTOP   rover is in FAULT, command rejected
+#   "err_wdog"    — ERR:WDOG    watchdog fired, rover went to FAULT
+#   "err_unknown" — ERR:UNKNOWN command not recognised by firmware
+#   "unknown"     — unrecognised frame (data = raw string)
+
+def parse_response(resp):
+    if resp == "PONG":
+        return ("pong", None)
+    if resp.startswith("ACK:"):
+        return ("ack", resp[4:])
+    if resp == "ERR:ESTOP":
+        return ("err_estop", None)
+    if resp == "ERR:WDOG":
+        return ("err_wdog", None)
+    if resp == "ERR:UNKNOWN":
+        return ("err_unknown", None)
+    return ("unknown", resp)
+
+
 # ─── Dry-run mock ────────────────────────────────────────────────────────────
 
 class DryRunRover:
-    """Prints commands to stdout instead of sending them to the Arduino."""
+    """Simulates Arduino responses following the MSM protocol."""
+
+    _CMD_TO_STATE = {
+        "STB": "STB", "RET": "RET", "FLT": "FLT",
+        "RST": "STB", "AVD:L": "AVD", "AVD:R": "AVD",
+    }
+
+    def __init__(self):
+        self._state = "STB"
 
     def send_command(self, cmd):
-        print(f"  [DRY-RUN] would send: {cmd}")
-        return "OK (simulated)"
+        if cmd == "PING":
+            return "PONG"
+        if cmd.startswith("EXP:"):
+            self._state = "EXP"
+            return "ACK:EXP"
+        new_state = self._CMD_TO_STATE.get(cmd)
+        if new_state is not None:
+            self._state = new_state
+            return f"ACK:{new_state}"
+        return "ERR:UNKNOWN"
 
 
 # ─── Main loop ───────────────────────────────────────────────────────────────
 
+def _send(rover, cmd):
+    """
+    Send cmd, parse response, return (kind, data).
+    Logs the exchange. Returns ("timeout", None) or ("error", str) on failure.
+    """
+    try:
+        raw = rover.send_command(cmd)
+        kind, data = parse_response(raw)
+        if kind == "ack":
+            print(f"  {cmd:<16} → ACK:{data}")
+        elif kind == "pong":
+            print(f"  {cmd:<16} → PONG")
+        elif kind == "err_estop":
+            print(f"  {cmd:<16} → [ESTOP] rover in FAULT — send RST to recover")
+        elif kind == "err_wdog":
+            print(f"  {cmd:<16} → [WDOG]  watchdog fired — rover in FAULT")
+        elif kind == "err_unknown":
+            print(f"  {cmd:<16} → [UNKNOWN CMD]")
+        else:
+            print(f"  {cmd:<16} → {raw}")
+        return kind, data
+    except TimeoutError as e:
+        print(f"  {cmd:<16} → [TIMEOUT] {e}")
+        return "timeout", None
+    except Exception as e:
+        print(f"  {cmd:<16} → [ERROR] {e}")
+        return "error", str(e)
+
+
 def run(rover, source, mode):
     print(f"\n[Controller] Starting in {mode.upper()} mode. Ctrl+C to stop.\n")
     last_cmd_time = 0.0
+    rover_state   = "STB"   # local mirror of rover MSM state
 
     try:
         while True:
@@ -255,23 +325,29 @@ def run(rover, source, mode):
                 cmd = "STB"
 
             if cmd is not None:
-                try:
-                    response = rover.send_command(cmd)
-                    print(f"  {cmd:<16} → {response}")
+                # If rover is in FAULT only RST is useful — block movement commands
+                if rover_state == "FLT" and cmd not in ("RST", "PING"):
+                    print(f"  {cmd:<16} → [BLOCKED] rover in FAULT, send RST first")
+                else:
+                    kind, data = _send(rover, cmd)
                     last_cmd_time = time.monotonic()
-                except TimeoutError as e:
-                    print(f"  [TIMEOUT] {e}")
-                except Exception as e:
-                    print(f"  [ERROR] {e}")
+
+                    if kind == "ack":
+                        rover_state = data
+                    elif kind == "err_wdog":
+                        # Watchdog fired: rover is now in FAULT. Auto-recover.
+                        rover_state = "FLT"
+                        print("  [Controller] Auto-sending RST to recover from watchdog...")
+                        kind2, data2 = _send(rover, "RST")
+                        if kind2 == "ack":
+                            rover_state = data2
+                    elif kind == "err_estop":
+                        rover_state = "FLT"
 
             # Keepalive: PING if no command sent in the last PING_INTERVAL_S
             if time.monotonic() - last_cmd_time >= PING_INTERVAL_S:
-                try:
-                    response = rover.send_command("PING")
-                    print(f"  {'PING':<16} → {response}")
-                    last_cmd_time = time.monotonic()
-                except Exception as e:
-                    print(f"  [PING ERROR] {e}")
+                kind, data = _send(rover, "PING")
+                last_cmd_time = time.monotonic()
 
             # In vision mode sleep briefly between frames
             if mode == "vision":
