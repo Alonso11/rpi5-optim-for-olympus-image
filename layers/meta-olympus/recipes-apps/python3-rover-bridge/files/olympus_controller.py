@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.7
+# Version: v0.8
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -34,6 +34,8 @@ CYCLE_WARN_MS     = 1500   # Umbral de advertencia de ciclo lento (RNF-001: ≤ 
 CYCLE_LOG_PERIOD  = 50     # Cada cuántos ciclos loguear tiempo a DEBUG
 RETREAT_DIST_MM   = 300    # Distancia táctica HLC para iniciar RET (> 200 mm del LLC)
 MAX_WAYPOINTS     = 5      # Últimos N waypoints seguros a retener (SyRS-061)
+BATT_WARN_MV      = 14000  # 3.5 V/celda × 4S Li-ion → advertir operador (EPS-REQ-001)
+BATT_CRITICAL_MV  = 12800  # 3.2 V/celda × 4S Li-ion → forzar STB inmediato
 FRAME_WIDTH       = 640
 FRAME_HEIGHT      = 480
 VISION_CONF_MIN   = 0.5    # Minimum detection confidence to act on
@@ -167,6 +169,57 @@ class WaypointTracker:
         return tlm.dist_mm > 0 and tlm.dist_mm < self._retreat_dist
 
 
+# ─── Energy Monitor ──────────────────────────────────────────────────────────
+
+class EnergyLevel(enum.Enum):
+    OK       = "OK"
+    WARN     = "WARN"
+    CRITICAL = "CRITICAL"
+
+
+class EnergyMonitor:
+    """
+    Supervisa tensión de batería desde frames TLM (EPS-REQ-001, SyRS-017).
+    Solo logea al cambiar de nivel para no saturar el log.
+
+    Umbrales para batería 4S Li-ion:
+      OK       : batt_mv ≥ BATT_WARN_MV
+      WARN     : BATT_CRITICAL_MV ≤ batt_mv < BATT_WARN_MV
+      CRITICAL : batt_mv < BATT_CRITICAL_MV  → forzar STB
+    """
+
+    def __init__(self,
+                 warn_mv: int     = BATT_WARN_MV,
+                 critical_mv: int = BATT_CRITICAL_MV):
+        self._warn_mv:     int         = warn_mv
+        self._critical_mv: int         = critical_mv
+        self._level:       EnergyLevel = EnergyLevel.OK
+
+    @property
+    def level(self) -> EnergyLevel:
+        return self._level
+
+    def update(self, tlm) -> EnergyLevel:
+        """
+        Evalúa batt_mv del TLM y actualiza el nivel.
+        Retorna el nivel resultante.
+        batt_mv == 0 significa sin lectura — se ignora sin cambiar el nivel.
+        """
+        mv = tlm.batt_mv
+        if mv == 0:
+            return self._level
+
+        if mv < self._critical_mv:
+            new_level = EnergyLevel.CRITICAL
+        elif mv < self._warn_mv:
+            new_level = EnergyLevel.WARN
+        else:
+            new_level = EnergyLevel.OK
+
+        self._level = new_level
+        return self._level
+
+
 # ─── Logger ──────────────────────────────────────────────────────────────────
 
 class OlympusLogger:
@@ -225,6 +278,17 @@ class OlympusLogger:
                     f"{tlm.safety:<6} stall={tlm.stall_mask:06b} "
                     f"batt={tlm.batt_mv}mV/{tlm.batt_ma}mA "
                     f"dist={tlm.dist_mm}mm t={tlm.tick_ms}ms")
+
+    def log_energy(self, level, batt_mv: int) -> None:
+        """Log de cambio de nivel de energía (EPS-REQ-001)."""
+        lvl_str = level.value if hasattr(level, 'value') else str(level)
+        msg = f"batería {batt_mv} mV — nivel {lvl_str}"
+        if lvl_str == "CRITICAL":
+            self._write("ERROR", "EPS", msg)
+        elif lvl_str == "WARN":
+            self._write("WARN",  "EPS", msg)
+        else:
+            self._write("INFO",  "EPS", msg)
 
     def log_cycle(self, cycle_ms: float) -> None:
         """Log periódico de tiempo de ciclo para verificación de RNF-001."""
@@ -564,10 +628,12 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     log = OlympusLogger(log_path)
     log.info("CTRL", f"Starting in {mode.upper()} mode")
 
-    last_cmd_time = 0.0
-    msm           = RoverMSM()
-    tracker       = WaypointTracker()
-    cycle_count   = 0
+    last_cmd_time  = 0.0
+    msm            = RoverMSM()
+    tracker        = WaypointTracker()
+    energy         = EnergyMonitor()
+    prev_energy    = EnergyLevel.OK
+    cycle_count    = 0
 
     try:
         while True:
@@ -581,7 +647,18 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                 if tlm:
                     log.log_tlm(tlm)
                     tracker.record(tlm, msm.state)
-                    if tracker.should_retreat(tlm):
+
+                    # Supervisión de energía — logea solo al cambiar de nivel
+                    e_level = energy.update(tlm)
+                    if e_level != prev_energy:
+                        log.log_energy(e_level, tlm.batt_mv)
+                        prev_energy = e_level
+
+                    # Prioridad de override: CRITICAL > should_retreat
+                    if e_level == EnergyLevel.CRITICAL:
+                        log.warn("EPS", "batería crítica — forzando STB")
+                        tlm_override = "STB"
+                    elif tracker.should_retreat(tlm):
                         wp = tracker.last_safe()
                         wp_info = (f"last_safe tick={wp.tick_ms}ms dist={wp.dist_mm}mm"
                                    if wp else "no waypoint previo")
