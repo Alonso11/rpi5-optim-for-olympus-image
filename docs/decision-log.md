@@ -269,27 +269,53 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 
 ---
 
+## Semana 4 — Auditoría HLC + limpieza Yocto (29 mar 2026)
+
+### Auditoría y correcciones olympus_controller.py (v1.2–v1.6)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-29 | `last_cmd_time = time.monotonic()` (antes 0.0) | Con 0.0, en el primer ciclo siempre `monotonic() - 0 >= 1.0` → PING espurio innecesario antes de cualquier comando |
+| 2026-03-29 | `DryRunRover.recv_tlm()` emite TLM sintético cada ~1 s | Sin TLM, el watchdog de link loss (5 s) disparaba falso durante pruebas `--dry-run`, confundiendo al desarrollador |
+| 2026-03-29 | Log WARN para `ERR:UNKNOWN` en `run()` | El firmware rechazaba comandos malformados en silencio total; ahora el log muestra qué comando fue rechazado y por qué |
+| 2026-03-29 | Eliminar `frame_area = FRAME_WIDTH * FRAME_HEIGHT` en `_decide()` | Variable calculada pero nunca usada; `area_frac` se calcula en coordenadas normalizadas del modelo (0–1), no en píxeles |
+| 2026-03-29 | `msm_state != RoverState.EXPLORE` en `WaypointTracker.record()` | El `getattr(msm_state, "value", None)` era un workaround de una dependencia circular ya resuelta; comparación directa es más clara y segura |
+
+### Auditoría y limpieza recetas Yocto
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-29 | Eliminar `recipes-apps/rover-hlc-backup/` | Prototipo Rust HLC que usaba `HELO:RPi5` (protocolo pre-MSM). Nunca estuvo en IMAGE_INSTALL. Reemplazado completamente por `olympus_controller.py` + `rover_bridge.so` |
+| 2026-03-29 | Eliminar `recipes-apps/rust-raspi-uart/` | Prototipo UART que enviaba `OLYMPUS_HELLO_ARDUINO\n` cada 5 s. Nunca estuvo en IMAGE_INSTALL. Primer prototipo antes de la arquitectura PyO3 |
+| 2026-03-29 | Quitar `python3-pillow` de IMAGE_INSTALL | Ningún script del proyecto importa PIL/Pillow. Instalado sin justificación desde la creación de la imagen |
+| 2026-03-29 | Quitar `python3-pip` de IMAGE_INSTALL | Sólo útil para instalación manual en desarrollo; la imagen tiene `debug-tweaks` activo pero pip no está justificado en producción |
+
+---
+
 ## Pendiente (al 29 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
 |---|---|---|
 | ~~Limpiar `onnxruntime` de IMAGE_INSTALL y `bblayers.conf`~~ | ✅ Hecho | — |
 | ~~Exportar YOLOv8n a ONNX~~ | ✅ Hecho | — |
-| ~~Implementar `olympus_controller.py` (manual + vision)~~ | ✅ v0.8 | — |
+| ~~Implementar `olympus_controller.py` (manual + vision)~~ | ✅ v1.6 | — |
 | ~~PR `feature/msm-main-integration` → `debug` en LLC repo~~ | ✅ PR #1 abierto | — |
 | ~~Verificar cámara IMX219 con rpicam-still~~ | ✅ 30 fps estable en CAM0 | — |
 | ~~Verificar test_opencv_camera.py~~ | ✅ Funciona | — |
 | ~~Crear ICD LLC en SRS (`icd/icd_llc.tex` v1.0)~~ | ✅ commit `2fe9f17` en srs repo | — |
-| ~~Añadir `recv_tlm()` a `rover_bridge` (lib.rs v1.5)~~ | ✅ commit `1331a28` | — |
+| ~~`recv_tlm()` en rover_bridge (lib.rs v1.5)~~ | ✅ commit `1331a28` | — |
 | ~~`RoverState` + `RoverMSM` (v0.3)~~ | ✅ commit `01e1f87` | — |
 | ~~`TlmFrame` parser (v0.4)~~ | ✅ commit `1331a28` | — |
 | ~~`OlympusLogger` (v0.5)~~ | ✅ commit `22d95f5` | — |
 | ~~Medición de ciclo RNF-001 (v0.6)~~ | ✅ commit `787f5ba` | — |
 | ~~`WaypointTracker` táctico HLC (v0.7)~~ | ✅ commit `6dcc54e` | — |
 | ~~`EnergyMonitor` EPS-REQ-001 (v0.8)~~ | ✅ commit `3e7d896` | — |
-| Log rotation — limitar `hlc.log` a ~2 h (CDH-REQ-002) | — | Media |
-| Link loss detection — N TLMs None → RET (COMM-REQ-005) | — | Media |
-| Exponer `--log-path` como argumento CLI | — | Baja |
-| Rebuild Yocto con `dtoverlay=imx219,cam0` (fix ya en recipe) | Requiere build en GCP VM | Media |
+| ~~Log rotation 5 MB / 1 backup (CDH-REQ-002) (v0.9)~~ | ✅ commit `487c68f` | — |
+| ~~Link loss detection → STB (COMM-REQ-005) (v1.0)~~ | ✅ commit `2b94b69` | — |
+| ~~`--log-path` como argumento CLI (v1.1)~~ | ✅ commit `bab35a8` | — |
+| ~~Auditoría HLC + fixes (v1.2–v1.6)~~ | ✅ commits `f596bcf`–`229121e` | — |
+| ~~Eliminar recetas obsoletas Yocto~~ | ✅ commits `4c893f4`, `73b925e` | — |
+| ~~Limpiar IMAGE_INSTALL (pillow, pip)~~ | ✅ commit `b1933ed` | — |
+| Rebuild Yocto con todos los fixes (dtoverlay, imagen v1.4) | Requiere build en GCP VM | Media |
 | Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |

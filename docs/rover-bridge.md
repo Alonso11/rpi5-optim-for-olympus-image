@@ -4,9 +4,15 @@
 
 `rover_bridge` es una extensión nativa de Python escrita en Rust y compilada como
 librería dinámica (`.so`). Expone la clase `Rover` que encapsula la comunicación
-serial con el Arduino Mega y el control GPIO del sensor HC-SR04.
+serial con el Arduino Mega siguiendo el protocolo MSM del ICD LLC.
 
 Se instala en `/usr/lib/python3.12/site-packages/rover_bridge.so`.
+
+---
+
+## Versión actual
+
+`lib.rs` — **v1.5**
 
 ---
 
@@ -14,16 +20,16 @@ Se instala en `/usr/lib/python3.12/site-packages/rover_bridge.so`.
 
 | Componente | Tecnología |
 |------------|------------|
-| FFI Python ↔ Rust | PyO3 0.22.6 |
-| Comunicación serial | serialport 4.8.1 |
-| GPIO RPi5 | rppal 0.22.1 |
-| Build offline | 46 crates vendoreados |
+| FFI Python ↔ Rust | PyO3 0.22 |
+| Comunicación serial | serialport 4.x |
+| GPIO RPi5 (futuro) | rppal 0.22 |
+| Build offline | crates vendoreados |
 
 ---
 
 ## API Python
 
-### `Rover(port: str, baud_rate: int)`
+### `Rover(port_name="/dev/arduino_mega", baud_rate=115200)`
 
 Abre el puerto serial y espera 2 segundos para el reset del Arduino (DTR).
 
@@ -37,21 +43,47 @@ rover = rover_bridge.Rover("/dev/arduino_mega", 115200)
 
 ### `rover.send_command(cmd: str) -> str`
 
-Envía un comando ASCII al Arduino (agrega `\n` automáticamente).
-Retorna `"Enviado: {cmd}"` como confirmación.
+Envía un comando MSM al Arduino (agrega `\n` automáticamente).
+Lee la respuesta hasta `\n` con timeout de 300 ms.
+Si el frame leído empieza por `TLM:` es telemetría asíncrona — se descarta
+y se sigue leyendo.
+
+**Retorna:** la respuesta ASCII del Arduino sin `\n` ni `\r`.
+
+**Excepciones:**
+- `IOError` — error de escritura o lectura serial
+- `TimeoutError` — no llegó respuesta en 300 ms
 
 ```python
-rover.send_command("F")   # Avanzar
-rover.send_command("S")   # Parar
-rover.send_command("MOVE:FWD:100")  # Protocolo largo
+resp = rover.send_command("PING")   # → "PONG"
+resp = rover.send_command("STB")    # → "ACK:STB"
+resp = rover.send_command("EXP:80:80")  # → "ACK:EXP"
 ```
 
 ---
 
-### `rover.setup_ultrasonic(trigger_pin: int, echo_pin: int) -> str`
+### `rover.recv_tlm() -> str | None`
 
-Configura los pines GPIO para el sensor HC-SR04.
-Debe llamarse antes de `get_ultrasonic_distance()`.
+Lee hasta una línea del puerto sin enviar comando (timeout 50 ms).
+Retorna el frame si empieza por `"TLM:"`, `None` en cualquier otro caso.
+
+Llamar al inicio de cada ciclo del loop para drenar los frames TLM asíncronos
+emitidos por el firmware (~1 s). No bloquea el loop principal.
+
+```python
+raw = rover.recv_tlm()
+if raw:
+    # raw == "TLM:NORMAL:000000:12340ms:11800mV:..."
+    tlm = TlmFrame.parse(raw)
+```
+
+---
+
+### `rover.setup_ultrasonic(trigger_pin: int, echo_pin: int) -> str` [FUTURO]
+
+Configura pines GPIO de la RPi5 para un segundo HC-SR04.
+**NOTA:** El HC-SR04 activo del rover está en el Arduino (D38/D39).
+Este método es para un sensor secundario en GPIO RPi5 (no instalado aún).
 
 ```python
 rover.setup_ultrasonic(23, 24)
@@ -60,57 +92,65 @@ rover.setup_ultrasonic(23, 24)
 
 ---
 
-### `rover.get_ultrasonic_distance() -> float | None`
+### `rover.get_ultrasonic_distance() -> float | None` [FUTURO]
 
-Lanza un pulso de 10 µs y mide el tiempo de eco.
-Retorna la distancia en milímetros, o `None` si está fuera de rango (< 20 mm o > 4000 mm).
-
-```python
-distancia = rover.get_ultrasonic_distance()
-if distancia:
-    print(f"{distancia:.2f} mm")
-```
+Mide distancia desde el HC-SR04 configurado en GPIO RPi5.
+Requiere llamar `setup_ultrasonic` primero.
+Retorna distancia en mm (rango válido: 20–4000 mm) o `None` si fuera de rango.
 
 ---
 
-## Protocolo Serial
+## Protocolo MSM
 
 ```
-RPi5                    Arduino Mega
- │                           │
- │── "F\n" ─────────────────►│
- │                           │  (ejecuta motor adelante)
- │◄─── "OK: Ejecutando ADELANTE\n" ──│
+RPi5 (HLC)                     Arduino Mega (LLC)
+     │                               │
+     │── "STB\n" ─────────────────►  │
+     │◄─ "ACK:STB\n" ─────────────── │
+     │                               │
+     │── "EXP:80:80\n" ───────────►  │
+     │◄─ "ACK:EXP\n" ─────────────── │
+     │                               │
+     │   (sin comandos ~1 s)         │── "TLM:NORMAL:...\n" ──► recv_tlm()
+     │                               │
+     │── "PING\n" ─────────────────► │
+     │◄─ "PONG\n" ─────────────────── │
 ```
 
-- Formato: `{COMANDO}\n`
-- Buffer Arduino: 32 bytes máximo
-- Baud rate: 115200 (error de trama < 0.16% a 16 MHz)
+- Formato ASCII, terminador `\n`
+- Baud rate: 115 200 bps 8N1
+- El Arduino emite TLM de forma asíncrona cada ~1 s
+- `send_command` descarta frames TLM intercalados y espera el ACK real
+- `recv_tlm` tiene timeout de 50 ms para no bloquear el loop
 
 ---
 
-## Implementación Rust
+## Implementación Rust (estructura)
 
 ```rust
 #[pyclass]
 struct Rover {
-    port: Mutex<Box<dyn serialport::SerialPort>>,
-    trigger_pin: Mutex<Option<OutputPin>>,
-    echo_pin: Mutex<Option<InputPin>>,
+    port:               Mutex<Box<dyn serialport::SerialPort>>,
+    ultrasonic_trigger: Mutex<Option<OutputPin>>,  // GPIO futuro
+    ultrasonic_echo:    Mutex<Option<InputPin>>,   // GPIO futuro
 }
 
 #[pymethods]
 impl Rover {
     #[new]
     fn new(port_name: &str, baud_rate: u32) -> PyResult<Self> { ... }
-    fn send_command(&self, cmd: &str) -> PyResult<String> { ... }
-    fn setup_ultrasonic(&self, trigger: u8, echo: u8) -> PyResult<String> { ... }
+
+    fn send_command(&self, cmd: String) -> PyResult<String> { ... }
+    fn recv_tlm(&self) -> PyResult<Option<String>> { ... }
+
+    // [FUTURO] HC-SR04 en GPIO RPi5
+    fn setup_ultrasonic(&self, trigger_pin: u8, echo_pin: u8) -> PyResult<String> { ... }
     fn get_ultrasonic_distance(&self) -> PyResult<Option<f64>> { ... }
 }
 ```
 
-Todos los recursos de hardware están protegidos con `Mutex<T>` para acceso seguro
-desde múltiples hilos Python (GIL liberado en operaciones I/O).
+Todos los recursos de hardware están protegidos con `Mutex<T>` para seguridad
+frente a accesos concurrentes (GIL de Python liberado durante I/O).
 
 ---
 
@@ -119,15 +159,12 @@ desde múltiples hilos Python (GIL liberado en operaciones I/O).
 La receta `python3-rover-bridge.bb` compila el módulo en modo offline:
 
 ```bash
-# do_configure:prepend — linkea los crates vendoreados
-ln -sf ${S}/vendor/* ${WORKDIR}/cargo_home/bitbake/
-
 # Variables de compilación cruzada para PyO3
-export CARGO_OFFLINE = "1"
-export PYO3_CROSS = "1"
-export PYO3_CROSS_PYTHON_VERSION = "3.12"
-export PYO3_CROSS_LIB_DIR = "${STAGING_LIBDIR}"
+CARGO_OFFLINE = "1"
+PYO3_CROSS = "1"
+PYO3_CROSS_PYTHON_VERSION = "3.12"
+PYO3_CROSS_LIB_DIR = "${STAGING_LIBDIR}"
 ```
 
-El binario resultante `librover_bridge.so` se instala como `rover_bridge.so`
-en el directorio site-packages de Python 3.12.
+El binario resultante se instala como `rover_bridge.so` en el directorio
+site-packages de Python 3.12.

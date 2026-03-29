@@ -11,8 +11,7 @@ ssh root@<IP_RPi5>
 
 ## Requisitos previos
 
-- Arduino Mega conectado por USB
-- Firmware del LLC cargado y corriendo
+- Arduino Mega conectado por USB con firmware LLC cargado
 - `/dev/arduino_mega` presente (verificar con `ls /dev/arduino_mega`)
 
 ---
@@ -23,32 +22,32 @@ ssh root@<IP_RPi5>
 
 ```bash
 ls -l /dev/arduino_mega
-# Esperado: lrwxrwxrwx ... /dev/arduino_mega -> ttyUSB0 (o ttyACM0)
+# Esperado: lrwxrwxrwx ... /dev/arduino_mega -> ttyACM0
 ```
 
 ---
 
-### 2. `test_rover.py` — Prueba básica con pyserial
+### 2. `test_rover.py` — Prueba básica pyserial (legacy)
 
-Verifica la comunicación serial sin depender del módulo Rust.
+Verifica la comunicación serial con pyserial directamente (sin rover_bridge).
+Útil como diagnóstico si `rover_bridge.so` no carga.
 
 ```bash
 test_rover.py
 ```
 
-Menú interactivo:
+Menú interactivo (protocolo de bajo nivel básico):
 - `1` — Avanzar 5 segundos y parar
 - `2` — Avanzar indefinidamente
 - `3` — Parar
 - `q` — Salir
 
-**Resultado esperado:** motores responden a los comandos.
-
 ---
 
-### 3. `test_bridge.py` — Prueba automatizada del módulo Rust
+### 3. `test_bridge.py` — Prueba del módulo Rust (protocolo MSM)
 
-Verifica que `rover_bridge.so` se carga correctamente y puede comunicarse.
+Verifica que `rover_bridge.so` carga correctamente y puede comunicarse
+con el Arduino usando el protocolo MSM.
 
 ```bash
 test_bridge.py
@@ -56,72 +55,69 @@ test_bridge.py
 
 Secuencia automática:
 1. Crea instancia `Rover` (2 segundos de espera reset Arduino)
-2. Envía `F` (avanza 3 segundos)
-3. Envía `S` (para)
+2. Envía `PING` → espera `PONG`
+3. Envía `STB` → espera `ACK:STB`
 
 **Resultado esperado:**
 ```
-Instancia de Rover creada en Rust correctamente.
-Moviendo motor (Rust gestiona el puerto serie)...
-Respuesta de Rust: Enviado: F
-Deteniendo motor...
-Respuesta de Rust: Enviado: S
+[OK] Conexión con el puente de Rust establecida.
+[OK] PONG recibido
+[OK] ACK:STB recibido
 ```
 
 ---
 
-### 4. `test_bridge_interactive.py` — Control manual completo
+### 4. `test_bridge_interactive.py` — Control manual MSM completo
 
-El script principal para verificar comunicación en tiempo real.
+Envía comandos MSM directamente al Arduino y muestra la respuesta.
 
 ```bash
 test_bridge_interactive.py
 ```
 
-Con puerto alternativo si `/dev/arduino_mega` no existe:
+Con puerto alternativo:
 ```bash
-test_bridge_interactive.py --port /dev/ttyUSB0 --baud 115200
+test_bridge_interactive.py --port /dev/ttyACM0 --baud 115200
 ```
 
 Comandos disponibles en el prompt:
-| Comando | Acción |
-|---------|--------|
-| `F` | Avanzar |
-| `B` | Retroceder |
-| `L` | Girar izquierda |
-| `R` | Girar derecha |
-| `S` | Parar |
-| `MOVE:FWD:100` | Protocolo largo |
+| Comando | Acción MSM |
+|---------|------------|
+| `PING` | Keepalive |
+| `STB` | Standby |
+| `EXP:80:80` | Explorar (vel. izq:der) |
+| `AVD:L` / `AVD:R` | Evasión |
+| `RET` | Retroceder |
+| `RST` | Reset desde FAULT |
 | `q` | Salir |
 
 ---
 
-### 5. `test_ultrasonic_rpi.py` — Sensor HC-SR04
+### 5. `test_ultrasonic_rpi.py` — Sensor HC-SR04 en GPIO RPi5 (futuro)
 
-Requiere el sensor conectado en GPIO 23 (Trigger) y GPIO 24 (Echo).
+Requiere un segundo HC-SR04 conectado directamente a GPIO RPi5 (no instalado
+en hardware actual). El HC-SR04 activo del rover está en el Arduino (D38/D39).
 
 ```bash
 test_ultrasonic_rpi.py
 ```
 
-**Resultado esperado:**
+**Resultado esperado (cuando esté instalado):**
 ```
 [OK] Conexión con el puente de Rust establecida.
 [OK] Ultrasonico configurado: Trig=23, Echo=24
-Iniciando mediciones...
 Distancia: 235.40 mm
 ```
-
-Presiona `Ctrl+C` para detener.
 
 ---
 
 ### 6. `test_opencv_camera.py` — Cámara CSI + OpenCV
 
-Requiere cámara CSI conectada. Verificar primero con:
+Requiere cámara IMX219 conectada en CAM0.
 
+Verificar primero que libcamera detecta la cámara:
 ```bash
-rpicam-hello
+rpicam-hello --list-cameras
 ```
 
 Luego:
@@ -131,15 +127,73 @@ test_opencv_camera.py
 
 **Resultado esperado:**
 ```
-[OK] Cámara iniciada. Capturando un frame de prueba...
+[OK] Frame capturado: 640x480
 [OK] Frame guardado en: /root/camera_test_raw.jpg
-[OK] Detección de bordes (Canny) realizada y guardada.
+[OK] Detección de bordes (Canny) realizada.
 ```
 
-Para ver las imágenes, cópialas a tu máquina local:
+Para copiar imágenes a la máquina local:
 ```bash
-# Desde tu máquina local
-gcloud compute scp instance-20260309-151629:~/camera_test_raw.jpg ./ --zone=us-central1-a
+scp root@<IP_RPi5>:/root/camera_test_raw.jpg ./
+```
+
+---
+
+### 7. `olympus_controller.py` — Controlador HLC completo
+
+#### Modo dry-run (sin Arduino)
+
+Permite probar el loop completo sin hardware. `DryRunRover` emite TLM
+sintético cada ~1 s para que el watchdog no dispare.
+
+```bash
+olympus_controller.py --mode manual --dry-run
+```
+
+```bash
+olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx --dry-run
+```
+
+#### Modo manual (con Arduino)
+
+```bash
+olympus_controller.py --mode manual
+```
+
+Shortcuts en el prompt:
+| Shortcut | Comando enviado |
+|----------|-----------------|
+| `exp 80 80` | `EXP:80:80` |
+| `avl` | `AVD:L` |
+| `avr` | `AVD:R` |
+| `ret` | `RET` |
+| `stb` | `STB` |
+| `ping` | `PING` |
+| `rst` | `RST` |
+| `q` | salir (envía STB) |
+
+#### Modo visión (con Arduino + cámara)
+
+```bash
+olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx
+```
+
+#### Opciones adicionales
+
+```bash
+olympus_controller.py --mode manual \
+    --port /dev/ttyACM0 \
+    --baud 115200 \
+    --log-path /tmp/hlc_test.log
+```
+
+#### Log generado
+
+```
+[2026-03-29T10:00:00.123] [INFO ] [CTRL   ] Starting in MANUAL mode
+[2026-03-29T10:00:01.124] [INFO ] [TLM    ] NORMAL stall=000000 batt=15200mV/1200mA dist=800mm t=1000ms
+[2026-03-29T10:00:01.125] [INFO ] [CMD    ] STB              → ack:STB
+[2026-03-29T10:00:01.126] [INFO ] [MSM    ] STB → STB  [ACK:STB]
 ```
 
 ---
@@ -148,9 +202,10 @@ gcloud compute scp instance-20260309-151629:~/camera_test_raw.jpg ./ --zone=us-c
 
 | Síntoma | Causa probable | Solución |
 |---------|---------------|----------|
-| `/dev/arduino_mega` no existe | Arduino no detectado | Verificar cable USB, revisar `dmesg` |
-| `Error al abrir el puerto` | Permisos o puerto ocupado | Ejecutar como root, matar procesos que usen el puerto |
-| `Error al crear el objeto Rover` | `rover_bridge.so` no encontrado | Verificar `python3 -c "import rover_bridge"` |
-| Motores no responden | Baud rate incorrecto o firmware | Verificar firmware Arduino con 115200 |
-| `Fuera de rango` en ultrasónico | Objeto muy cerca/lejos o sin eco | Rango válido: 20–4000 mm |
-| Cámara no abre | libcamera no inicializada | Probar `rpicam-hello` primero |
+| `/dev/arduino_mega` no existe | Arduino no detectado o regla udev no cargada | `dmesg \| grep ACM`; verificar `udevadm trigger` |
+| `IOError` al abrir puerto | Puerto ocupado o permisos | Ejecutar como root; `fuser /dev/arduino_mega` |
+| `ImportError: rover_bridge` | `.so` no instalado | `python3 -c "import rover_bridge"` para diagnóstico |
+| `TimeoutError` esperando respuesta | Firmware LLC no cargado o baud incorrecto | Verificar firmware con `test_rover.py` |
+| `sin TLM por 5+ s` en el log | Firmware no emite TLM o enlace roto | Verificar firmware LLC versión >= v2.4 |
+| Cámara no detectada | dtoverlay incorrecto o conector CAM1 | Verificar `rpicam-hello --list-cameras`; usar CAM0 (conector derecho) |
+| Ciclo lento > 1500 ms | Inferencia YOLOv8n lenta en CPU | Normal en RPi5 sin NPU; ajustar `VISION_CONF_MIN` |

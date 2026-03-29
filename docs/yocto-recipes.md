@@ -8,19 +8,20 @@ que componen la imagen `olympus-image`.
 ## Árbol de dependencias (simplificado)
 
 ```
-olympus-image
+olympus-image (v1.4)
 ├── custom-udev-rules          → /etc/udev/rules.d/99-arduino.rules
 ├── resize-rootfs              → servicio systemd primer arranque
 ├── wifi-config                → wpa_supplicant + credenciales WiFi
-├── wifi-power-save            → desactiva power-save del chip WiFi
+├── wifi-power-save            → power save chip WiFi (systemd)
 ├── python3-rover-bridge       → HLC completo (Python + Rust + modelo ONNX)
-│   ├── rover_bridge.so        (extensión PyO3/Rust — UART MSM)
-│   ├── olympus_controller.py  (lógica principal + visión)
-│   ├── rover_protocol.py      (codificación de comandos MSM)
-│   └── yolov8n.onnx           (modelo YOLOv8n opset 12)
+│   ├── rover_bridge.so        (extensión PyO3/Rust — protocolo MSM)
+│   ├── olympus_controller.py  (controlador principal v1.6)
+│   ├── test_*.py              (scripts de prueba hardware)
+│   └── yolov8n.onnx           (modelo YOLOv8n opset 12, 13 MB)
+├── libpisp                    (ISP pisp RPi5 — requerido por libcamera)
 ├── libcamera                  (fork RPi Foundation, pipeline rpi/pisp)
 ├── libcamera-apps             (rpicam-apps HEAD, meson feature types)
-├── python3-opencv / numpy / pyserial / pillow / pip
+├── python3-opencv / numpy / pyserial
 ├── kernel-modules + kernel-module-cdc-acm
 ├── linux-firmware-rpidistro-bcm43455
 ├── wpa-supplicant + iw
@@ -36,7 +37,7 @@ olympus-image
 
 ### Imagen
 
-#### `recipes-core/images/olympus-image.bb` — v1.2
+#### `recipes-core/images/olympus-image.bb` — v1.4
 
 Imagen raíz del rover. Hereda `core-image` y añade todos los paquetes necesarios
 con `IMAGE_INSTALL:append`.
@@ -49,37 +50,27 @@ con `IMAGE_INSTALL:append`.
 
 ### Apps (recipes-apps)
 
-#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb`
+#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.2
 
 Receta principal del HLC. Instala en el target:
 
 | Fichero | Destino |
 |---------|---------|
-| `rover_bridge.so` | `/usr/lib/python3.x/site-packages/` |
-| `olympus_controller.py` | `/usr/bin/olympus_controller.py` |
-| `rover_protocol.py` | `/usr/bin/rover_protocol.py` |
-| `yolov8n.onnx` | `/usr/share/olympus/models/yolov8n.onnx` |
+| `rover_bridge.so` | `/usr/lib/python3.12/site-packages/` |
+| `olympus_controller.py` | `/usr/bin/` |
+| `test_bridge.py` | `/usr/bin/` |
+| `test_bridge_interactive.py` | `/usr/bin/` |
+| `test_ultrasonic_rpi.py` | `/usr/bin/` |
+| `test_opencv_camera.py` | `/usr/bin/` |
+| `test_rover.py` | `/usr/bin/` |
+| `yolov8n.onnx` | `/usr/share/olympus/models/` |
 
-**Dependencias:** `python3-opencv`, `python3-numpy`, `python3-pyserial`
+**Dependencias build:** `python3`, `python3-setuptools-native`, `udev`
+**Dependencias runtime:** `python3-core`, `python3-pyserial`, `udev`
 
-El binario `rover_bridge.so` se compila desde el crate Rust `rover_bridge`
-(con PyO3) durante el `do_compile`. Expone a Python las funciones UART de
-comunicación con el MSM del Arduino Mega.
-
----
-
-#### `recipes-apps/rover-hlc-backup/rover-hlc.bb` *(no incluida en la imagen)*
-
-Versión antigua del HLC como binario Rust puro. Hereda `cargo`. Instala
-`rover-hlc` en `/usr/bin`. Reemplazada por `python3-rover-bridge`.
-
----
-
-#### `recipes-apps/rust-raspi-uart/rust-raspi-uart.bb` *(no incluida en la imagen)*
-
-Prototipo inicial de comunicación UART Rust → Arduino. Hereda `cargo`. Instala
-`rust-raspi-uart` en `/usr/bin`. Fue el primer prototipo antes de la
-arquitectura PyO3. Conservada como referencia.
+El binario `rover_bridge.so` se compila desde el crate Rust con PyO3 durante
+`do_compile`. Expone a Python las funciones de comunicación UART con el MSM del
+Arduino Mega (`send_command`, `recv_tlm`) y métodos GPIO para sensor futuro.
 
 ---
 
@@ -87,15 +78,19 @@ arquitectura PyO3. Conservada como referencia.
 
 #### `recipes-connectivity/wifi-config/wifi-config.bb`
 
-- Instala `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` con las credenciales
-  de red del rover.
-- Habilita `wpa_supplicant@wlan0.service` en systemd para autoconexión al arranque.
+- Instala `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` (modo 0600).
+- Habilita `wpa_supplicant@wlan0.service` en systemd para autoconexión.
+- **Nota:** El archivo contiene placeholders. Editar antes del primer arranque:
+  ```
+  ssid="TU_SSID_AQUI"
+  psk="TU_PASSWORD_AQUI"
+  ```
 
 #### `recipes-connectivity/wifi-power-save/wifi-power-save.bb`
 
-- Instala `wifi-power-save.sh` que ejecuta `iw dev wlan0 set power_save off`.
-- Servicio systemd `wifi-power-save.service` que lo lanza tras `network-online.target`.
-- Reduce la latencia de la conexión WiFi del rover.
+- Instala `wifi-power-save.sh` que ejecuta `iw dev wlan0 set power_save on`.
+- Servicio systemd `wifi-power-save.service` que lo lanza tras `wpa_supplicant@wlan0`.
+- Reduce consumo del chip WiFi BCM43455 en reposo.
 
 ---
 
@@ -104,74 +99,125 @@ arquitectura PyO3. Conservada como referencia.
 #### `recipes-core/custom-udev-rules/custom-udev-rules.bb`
 
 - Instala `/etc/udev/rules.d/99-arduino.rules`.
-- Crea el symlink `/dev/arduino_mega` apuntando al `ttyACM` del Arduino Mega
-  identificado por VID/PID USB (Atmel/FTDI).
-- Evita que el número de dispositivo cambie entre reinicios.
+- Crea symlink `/dev/arduino_mega` para el Arduino Mega con tres VID/PID:
+  - Atmel 16U2 (Arduino Mega original): `2341:0042`
+  - CH340/CH341 (clones genéricos): `1a86:7523`
+  - Fallback genérico USB serial: `ttyACM*` / `ttyUSB*`
+- Permisos `0666` (lectura/escritura sin sudo).
 
 ---
 
 ### Soporte (recipes-support)
 
-#### `recipes-support/resize-rootfs/resize-rootfs.bb`
+#### `recipes-support/resize-rootfs/resize-rootfs.bb` — v1.1
 
-- Instala `resize-rootfs.sh` y su unidad systemd.
-- En el **primer arranque** expande automáticamente la partición rootfs al
-  tamaño completo de la microSD.
-- **Dependencias:** `parted`, `e2fsprogs`.
+- Instala `resize-rootfs.sh` y su unidad systemd `resize-rootfs.service`.
+- En el **primer arranque** expande la partición rootfs al tamaño completo de la SD.
+- Guarda bandera en `/var/lib/misc/resize-rootfs.done` para no ejecutarse más.
+- **Dependencias:** `parted`, `e2fsprogs-resize2fs`.
+
+#### `recipes-support/opencv/opencv_%.bbappend`
+
+- Activa `BUILD_opencv_dnn=ON` en la compilación de OpenCV.
+- **Necesario** para que `cv2.dnn.readNetFromONNX()` funcione en `olympus_controller.py`.
+- `meta-oe` desactiva el módulo DNN por defecto; este append lo habilita.
 
 ---
 
 ### Kernel (recipes-kernel)
 
-#### `recipes-kernel/linux/linux-raspberrypi_%.bbappend`
+#### `recipes-kernel/linux/linux-raspberrypi_%.bbappend` — v1.5
 
-Añade `powersave.cfg` como fragmento de configuración del kernel:
+Añade dos fragmentos de configuración del kernel:
 
+**`powersave.cfg`** — Gobernador de CPU:
 ```
-CONFIG_CPU_FREQ_GOV_POWERSAVE=y
+CONFIG_CPU_FREQ_DEFAULT_GOV_POWERSAVE=y
+CONFIG_CPU_IDLE=y
+CONFIG_TICKLESS_IDLE=y
 ```
 
-Activa el gobernador de frecuencia `powersave` para reducir consumo energético
-del rover en operación continua.
+**`camera.cfg`** — DMA-BUF heap (requerido por rpicam-apps en RPi5):
+```
+CONFIG_DMABUF_HEAPS=y
+CONFIG_DMABUF_HEAPS_SYSTEM=y
+CONFIG_DMABUF_HEAPS_CMA=y
+```
+Sin `CONFIG_DMABUF_HEAPS_CMA`, el dispositivo `/dev/dma_heap/linux,cma` no existe
+y `rpicam-still` falla con timeout en el pisp-fe.
+
+---
+
+### BSP (recipes-bsp)
+
+#### `recipes-bsp/bootfiles/rpi-config_%.bbappend`
+
+Modifica `config.txt` en el target:
+
+- Fuerza `camera_auto_detect=0` (meta-raspberrypi lo vuelve a poner en 1 — hay
+  un `do_install:append` con `sed` que lo elimina y añade `=0` al final).
+- Añade overlays explícitos de sensores CSI:
+  ```
+  dtoverlay=imx219,cam0   ← IMX219 genérica en CAM0 (conector derecho)
+  dtoverlay=ov5647,cam1   ← OV5647 en CAM1 (conector izquierdo, si está presente)
+  ```
+- **Razón:** Las cámaras de terceros sin EEPROM no son detectadas automáticamente.
+
+**Mapa de conectores RPi5:**
+
+| Conector | Etiqueta | dtoverlay param | Nota |
+|----------|----------|-----------------|------|
+| Derecho (desde arriba) | CAM0 | `cam0` | Cámara instalada en el rover |
+| Izquierdo (desde arriba) | CAM1 | `cam1` (default) | Libre |
+
+---
+
+### Libs (recipes-libs)
+
+#### `recipes-libs/libpisp/libpisp_1.3.0.bb`
+
+- Biblioteca de sintonización ISP para el pipeline `rpi/pisp` de RPi5.
+- Fuente: `git://github.com/raspberrypi/libpisp.git` (commit pinneado).
+- Build: Meson + pkgconfig.
+- **Dependencias:** nlohmann-json, boost.
+- Requerida por `libcamera_%.bbappend` cuando se usa el pipeline pisp.
 
 ---
 
 ### Multimedia (recipes-multimedia)
 
-#### `recipes-multimedia/libcamera/libcamera_%.bbappend` — v1.2
+#### `recipes-multimedia/libcamera/libcamera_%.bbappend` — v1.5
 
-Reemplaza el origen de libcamera. La receta upstream de `meta-openembedded`
-(versión 0.4.0) solo incluye el pipeline `rpi/vc4` (RPi4) y no detecta cámaras
-en RPi5.
+Reemplaza el origen de libcamera con el fork de RPi Foundation:
 
 ```bitbake
 SRC_URI = "git://github.com/raspberrypi/libcamera.git;protocol=https;branch=next"
 SRCREV  = "fe601eb6ffe02922ff980c60621dd79d401d9061"
-LIBCAMERA_PIPELINES:raspberrypi5 = "rpi/vc4,rpi/pisp"
 ```
 
-El pipeline `rpi/pisp` es obligatorio en RPi5 para detectar cámaras CSI
-(ej. IMX219).
+**Cambios clave:**
+- Inyecta pipelines `rpi/vc4,rpi/pisp` (meta-oe solo incluye `rpi/vc4`).
+- Añade archivos IPA y tuning del pisp en `FILES`.
+- Añade `v4l2-compat.so` para soporte OpenCV via LD_PRELOAD.
+- Añade `libpisp` como dependencia.
+- Suprime warning `-Wno-unaligned-access` en ARM.
+
+**Por qué:** Sin el pipeline `rpi/pisp`, `rpicam-hello --list-cameras` devuelve
+vacío en RPi5 aunque el sensor sea detectado por I2C.
 
 #### `recipes-multimedia/libcamera-apps/libcamera-apps_%.bbappend` — v1.3
 
-Actualiza `libcamera-apps` al HEAD del fork `rpicam-apps` de RPi Foundation.
-
-**Motivos:**
-1. La versión `1.4.2` de meta-raspberrypi usa la API antigua de libcamera
-   (símbolos `AeLocked`, conversión `string_view`) incompatible con el fork RPi.
-2. El nuevo `rpicam-apps` cambió las opciones meson de tipo bool a feature type
-   (`enabled`/`disabled`), pero meta-raspberrypi aún pasa los valores bool.
-
-**Solución:**
-- `EXTRA_OEMESON:remove` para eliminar cada opción bool antigua.
-- `EXTRA_OEMESON:append` para añadir las opciones feature correctas.
-- `FILES:${PN}` ampliado para incluir los nuevos paths de plugins y assets.
+Actualiza `libcamera-apps` al HEAD del fork `rpicam-apps` de RPi Foundation:
 
 ```bitbake
-SRCREV = "593f63bf981de1a572bbb46e79e7d8b169e96fae"
 SRC_URI = "git://github.com/raspberrypi/rpicam-apps.git;protocol=https;branch=main"
+SRCREV  = "593f63bf981de1a572bbb46e79e7d8b169e96fae"
 ```
+
+**Cambios clave:**
+- Convierte opciones meson de bool a feature type (`enabled`/`disabled`).
+- Amplía `FILES` con wildcard `rpicam_app.so.*` (versión independiente).
+- Desactiva backends innecesarios: egl, libav, opencv, qt, tflite.
 
 ---
 
@@ -185,14 +231,13 @@ SRC_URI = "git://github.com/raspberrypi/rpicam-apps.git;protocol=https;branch=ma
 | `wpa-supplicant` | meta-networking | Daemon WiFi |
 | `iw` | meta-networking | Configuración de interfaz WiFi |
 | `linux-firmware-rpidistro-bcm43455` | meta-raspberrypi | Firmware chip WiFi RPi5 (CYW43455) |
-| `python3-core` | meta-openembedded | Intérprete Python 3 |
-| `python3-pyserial` | meta-openembedded | UART desde Python (fallback) |
-| `python3-numpy` | meta-openembedded | Procesamiento numérico |
-| `python3-opencv` | meta-openembedded | Visión por computadora + cv2.dnn (inferencia ONNX) |
-| `python3-pillow` | meta-openembedded | Manipulación de imágenes |
-| `python3-pip` | meta-openembedded | Instalación de paquetes en desarrollo |
-| `libcamera` | meta-openembedded (sobrescrita) | Soporte cámara CSI con pipeline pisp |
-| `libcamera-apps` | meta-openembedded (sobrescrita) | `rpicam-hello`, `rpicam-still`, etc. |
+| `python3-core` | meta-openembedded | Intérprete Python 3.12 |
+| `python3-pyserial` | meta-openembedded | UART desde Python (usado por test_rover.py) |
+| `python3-numpy` | meta-openembedded | Procesamiento numérico (OpenCV) |
+| `python3-opencv` | meta-openembedded | Visión + cv2.dnn (inferencia ONNX) |
+| `libpisp` | meta-olympus | ISP RPi5 (pipeline pisp) |
+| `libcamera` | meta-olympus (override) | Soporte cámara CSI con pipeline pisp |
+| `libcamera-apps` | meta-olympus (override) | `rpicam-still`, `rpicam-hello`, etc. |
 | `v4l-utils` | meta-openembedded | Diagnóstico de cámara (`v4l2-ctl`) |
 | `libudev` | poky | udev runtime para serialport |
 | `openssh` | poky | SSH para desarrollo remoto |
@@ -200,17 +245,3 @@ SRC_URI = "git://github.com/raspberrypi/rpicam-apps.git;protocol=https;branch=ma
 | `bash` | poky | Shell interactivo |
 | `cpufrequtils` | meta-openembedded | Control de frecuencia CPU |
 | `powertop` | meta-openembedded | Análisis de consumo energético |
-
----
-
-## Configuración de cámara (fuera de Yocto)
-
-La detección de cámaras IMX219 de terceros (sin EEPROM) requiere añadir
-manualmente en `/boot/config.txt` del target:
-
-```
-dtoverlay=imx219
-```
-
-Sin este overlay el kernel detecta el sensor en dmesg pero libcamera reporta
-`No cameras available`.

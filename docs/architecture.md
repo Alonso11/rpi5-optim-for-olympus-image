@@ -2,25 +2,27 @@
 
 ## Visión General
 
-El proyecto Olympus implementa un rover controlado por dos microcontroladores:
+El proyecto Olympus implementa un rover controlado por dos nodos:
 
 - **RPi5 (HLC)** — High-Level Controller. Ejecuta una imagen Linux personalizada
   construida con Yocto (rama scarthgap). Responsable de la lógica de alto nivel,
-  visión por computadora, sensores y comunicación con el LLC.
+  visión por computadora y comunicación con el LLC.
 - **Arduino Mega 2560 (LLC)** — Low-Level Controller. Ejecuta el firmware de
-  control de motores en tiempo real. Recibe comandos ASCII por USART3.
+  control de motores en tiempo real (Rust/AVR). Recibe comandos ASCII por USB
+  (USART0 → chip CDC-ACM ATmega16U2).
 
 ```
 ┌────────────────────────────────────┐        ┌──────────────────────────────────┐
 │  Raspberry Pi 5 (HLC)              │        │  Arduino Mega 2560 (LLC)         │
 │  Yocto — meta-olympus              │        │  rover-low-level-controller      │
 │                                    │        │                                  │
-│  rover_bridge.so (Rust/PyO3) ──────┼─USART3─┼─── CommandInterface              │
-│  /dev/arduino_mega                 │D14/D15 │    MSM (Standby/Explore/…/Fault) │
+│  rover_bridge.so (Rust/PyO3) ──────┼─ USB ──┼─── USART0 (CDC-ACM)             │
+│  /dev/arduino_mega                 │        │    MSM: STB/EXP/AVD/RET/FLT     │
 │                                    │        │                                  │
-│  python3 (HLC logic)               │        │  6 Motores L298N (PWM)           │
+│  olympus_controller.py (v1.6)      │        │  6 Motores (PWM L298N)           │
 │  OpenCV + cv2.dnn (YOLOv8n ONNX)  │        │  HC-SR04 D38(Trig) D39(Echo)     │
-│  Cámara CSI (libcamera / V4L2)     │        │  6 Encoders Hall (INT0–INT5)     │
+│  Cámara CSI (libcamera / V4L2)     │        │  VL53L0X (ToF I2C)               │
+│                                    │        │  6 Encoders Hall (INT0–INT5)     │
 └────────────────────────────────────┘        └──────────────────────────────────┘
 ```
 
@@ -29,19 +31,27 @@ El proyecto Olympus implementa un rover controlado por dos microcontroladores:
 ## Capas del Stack de Software (RPi5)
 
 ```
-┌─────────────────────────────────────────┐
-│  olympus_controller.py (HLC logic)      │  ← pendiente de implementar
-├─────────────────────────────────────────┤
-│  rover_bridge.so  (Rust/PyO3)           │
-│  - Serial USART3 hacia Arduino          │
-│  - GPIO RPi5 para HC-SR04 futuro        │
-├─────────────────────────────────────────┤
-│  serialport crate  │  rppal crate       │
-├─────────────────────────────────────────┤
-│  /dev/arduino_mega (udev symlink)       │
-├─────────────────────────────────────────┤
-│  Yocto Linux — meta-olympus (scarthgap) │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  olympus_controller.py (v1.6)                       │
+│  - RoverMSM + RoverState (espejo estado Arduino)    │
+│  - TlmFrame parser (20 campos, ICD LLC)             │
+│  - WaypointTracker (5 puntos seguros, SyRS-061)     │
+│  - EnergyMonitor (4S Li-ion, EPS-REQ-001)           │
+│  - OlympusLogger (ISO-8601, RotatingFileHandler)    │
+│  - VisionSource (YOLOv8n ONNX via cv2.dnn)          │
+│  - ManualSource (stdin shortcuts)                   │
+├─────────────────────────────────────────────────────┤
+│  rover_bridge.so  (Rust/PyO3 — v1.5)               │
+│  - send_command(cmd) → respuesta ASCII Arduino      │
+│  - recv_tlm()        → frame TLM asíncrono o None   │
+│  - setup_ultrasonic / get_ultrasonic_distance [FUTURO] │
+├─────────────────────────────────────────────────────┤
+│  serialport crate  │  rppal crate                   │
+├─────────────────────────────────────────────────────┤
+│  /dev/arduino_mega (udev symlink → ttyACM0)         │
+├─────────────────────────────────────────────────────┤
+│  Yocto Linux — meta-olympus (scarthgap)             │
+└─────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -59,13 +69,9 @@ El proyecto Olympus implementa un rover controlado por dos microcontroladores:
 | meta-openembedded/meta-networking | WiFi, wpa_supplicant | ✅ |
 | meta-raspberrypi | Soporte RPi5 (kernel, firmware) | ✅ |
 | **meta-olympus** | Capa personalizada del proyecto | ✅ |
-| meta-tensorflow-lite | Inferencia TFLite | ❌ no clonado |
-| meta-onnxruntime | Inferencia ONNX Runtime | ❌ no clonado |
 
-> **Nota:** La inferencia ONNX se cubre con `cv2.dnn` (incluido en `python3-opencv`),
-> que puede cargar modelos `.onnx` directamente sin necesitar `meta-onnxruntime`.
-> Las entradas de `bblayers.conf` y `IMAGE_INSTALL` para estas layers están
-> pendientes de limpiar.
+> `meta-tensorflow-lite` y `meta-onnxruntime` no están en el proyecto.
+> La inferencia ONNX se cubre con `cv2.dnn` incluido en `python3-opencv`.
 
 ---
 
@@ -73,30 +79,33 @@ El proyecto Olympus implementa un rover controlado por dos microcontroladores:
 
 | Receta | Descripción | En imagen |
 |--------|-------------|-----------|
-| python3-rover-bridge | Módulo Rust/PyO3 (serial + GPIO) | ✅ |
-| wifi-config | wpa_supplicant configurado | ✅ |
-| wifi-power-save | Ahorro energía WiFi (systemd) | ✅ |
-| custom-udev-rules | Symlink /dev/arduino_mega | ✅ |
-| resize-rootfs | Expansión rootfs (one-shot) | ✅ |
-| linux-raspberrypi_%.bbappend | Config kernel powersave | - |
-| libcamera-apps_%.bbappend | Fix FILES para rpicam_app.so | - |
-| rust-raspi-uart | Binario UART básico (sin vendor) | ❌ |
-| rover-hlc-backup | Prototipo HLC en Rust | ❌ |
+| `python3-rover-bridge` | Módulo Rust/PyO3 + controlador + modelo ONNX | ✅ |
+| `wifi-config` | wpa_supplicant configurado | ✅ |
+| `wifi-power-save` | Ahorro energía WiFi (systemd) | ✅ |
+| `custom-udev-rules` | Symlink /dev/arduino_mega | ✅ |
+| `resize-rootfs` | Expansión rootfs one-shot primer arranque | ✅ |
+| `libpisp_1.3.0` | Biblioteca ISP pisp para cámara RPi5 | ✅ |
+| `linux-raspberrypi_%.bbappend` | Fragmentos kernel powersave + camera DMA-BUF | — |
+| `libcamera_%.bbappend` | Fork RPi Foundation, pipeline rpi/pisp | — |
+| `libcamera-apps_%.bbappend` | rpicam-apps HEAD, meson feature types | — |
+| `opencv_%.bbappend` | Activa BUILD_opencv_dnn para cv2.dnn | — |
+| `rpi-config_%.bbappend` | dtoverlay imx219/ov5647, camera_auto_detect=0 | — |
 
 ---
 
-## Protocolo MSM (USART3 — 115200 baud)
+## Protocolo MSM (USB CDC-ACM — 115200 baud 8N1)
 
-La RPi5 se comunica con el Arduino usando el protocolo ASCII de la MSM.
-Cada trama termina en `\n`. El Arduino responde en <300 ms.
+La RPi5 se comunica con el Arduino a través del USB del Mega (USART0 → ATmega16U2).
+Cada trama termina en `\n`. El firmware responde en < 20 ms (timeout HLC 300 ms).
+El Arduino emite telemetría extendida (TLM) de forma asíncrona cada ~1 s.
 
 ### Comandos RPi5 → Arduino
 
 | Comando | Acción |
 |---------|--------|
-| `PING` | Keepalive — resetea watchdog Arduino (2 s max sin PING → FAULT) |
-| `STB` | Pasar a Standby (motores parados) |
-| `EXP:<l>:<r>` | Explorar con velocidades izquierda/derecha (ej: `EXP:80:80`) |
+| `PING` | Keepalive — resetea watchdog Arduino (~2 s sin PING → FAULT) |
+| `STB` | Standby (motores parados) |
+| `EXP:<l>:<r>` | Explorar con velocidades 0–100 (ej: `EXP:80:80`) |
 | `AVD:L` | Girar izquierda (evasión) |
 | `AVD:R` | Girar derecha (evasión) |
 | `RET` | Retroceder |
@@ -109,51 +118,89 @@ Cada trama termina en `\n`. El Arduino responde en <300 ms.
 |-----------|-------------|
 | `PONG` | Respuesta a PING |
 | `ACK:<STATE>` | Transición confirmada (ej: `ACK:EXP`) |
-| `TLM:<SAFETY>:<MASK>` | Telemetría periódica (~1 s) |
 | `ERR:ESTOP` | Comando rechazado (Arduino en FAULT) |
 | `ERR:WDOG` | Watchdog expirado → FAULT |
 | `ERR:UNKNOWN` | Comando no reconocido |
+
+### Frame TLM extendido (asíncrono, ~1 s)
+
+```
+TLM:<SAF>:<STALL>:<TS>ms:<MV>mV:<MA>mA:<I0>:<I1>:<I2>:<I3>:<I4>:<I5>:<T>C:<B0>:<B1>:<B2>:<B3>:<B4>:<B5>C:<DIST>mm
+```
+
+| Campo | Descripción |
+|-------|-------------|
+| SAF | Estado de seguridad: NORMAL / WARN / LIMIT / FAULT |
+| STALL | Máscara stall 6 bits (bit5=FR … bit0=RL) |
+| TS | Tick Arduino en ms (monotónico) |
+| MV | Tensión batería en mV (0 = sin lectura) |
+| MA | Corriente batería en mA con signo |
+| I0–I5 | Corrientes motores FR/FL/CR/CL/RR/RL en mA |
+| T | Temperatura ambiente °C |
+| B0–B5 | Temperaturas celdas batería °C |
+| DIST | Distancia frontal ToF en mm (0 = sin lectura) |
+
+Ver ICD completo: `../TFG_OLYMPUS_BACKUP/srs_rover_olympus/icd/icd_llc.tex`
+
+---
+
+## Capas de Protección de Distancia
+
+```
+LLC (hardware):   < 150 mm (VL53L0X ToF)  → FAULT inmediato en Arduino
+LLC (hardware):   < 200 mm (HC-SR04)      → FAULT inmediato en Arduino
+HLC (táctica):    < 300 mm (campo DIST del TLM) → RET proactivo (WaypointTracker)
+```
+
+---
+
+## Supervisión de Energía (4S Li-ion)
+
+| Nivel | Umbral | Acción HLC |
+|-------|--------|------------|
+| OK | ≥ 14 000 mV (3.5 V/celda) | Normal |
+| WARN | 12 800 – 13 999 mV | Log WARN + alerta operador |
+| CRITICAL | < 12 800 mV (3.2 V/celda) | Forzar STB inmediato |
 
 ---
 
 ## Sensores
 
-### HC-SR04 — capa de emergencia (LLC)
-
-Conectado al **Arduino Mega** y gestionado en el firmware LLC.
+### HC-SR04 — emergencia hardware (LLC)
 
 | Pin HC-SR04 | Pin Arduino |
 |-------------|-------------|
 | Trigger | D38 |
 | Echo | D39 |
 
-- Lectura cada 5 ciclos (~100 ms)
-- Distancia < 200 mm → MSM transiciona a FAULT automáticamente
-- La RPi5 recibe la notificación via `TLM` o `ACK:FLT`
+Lectura cada 5 ciclos LLC (~100 ms). Distancia < 200 mm → FAULT automático.
+
+### VL53L0X — ToF I2C (LLC)
+
+Montado en parte frontal del chasis. Distancia < 150 mm → FAULT automático.
+Valor reportado en campo `DIST` del frame TLM.
 
 ### Cámara CSI — visión (HLC)
 
-Cámara CSI conectada a la RPi5. Gestionada con libcamera + OpenCV V4L2.
-
-- Detección de obstáculos: `cv2.dnn` + YOLOv8n ONNX (~8–12 FPS a 640×480)
-- Decisión de evasión: posición X del bounding box → `AVD:L` / `AVD:R`
-- Ver `docs/obstacle-detection-idea.md` para el plan completo
+- IMX219 genérica en **CAM0** (conector derecho de la RPi5)
+- `dtoverlay=imx219,cam0` aplicado automáticamente por `rpi-config_%.bbappend`
+- Captura con `rpicam-still` → inferencia con `cv2.dnn.readNetFromONNX` (YOLOv8n)
+- ~1–2 FPS a 640×480 (CPU)
 
 ### HC-SR04 secundario — GPIO RPi5 (futuro)
 
-Los métodos `setup_ultrasonic` / `get_ultrasonic_distance` de `rover_bridge`
-están preparados para un segundo HC-SR04 conectado directamente a GPIO RPi5.
-No está instalado en el hardware actual.
+Los métodos `setup_ultrasonic` / `get_ultrasonic_distance` de `rover_bridge.so`
+están preparados para un segundo sensor directo en GPIO RPi5. No instalado aún.
 
 ---
 
-## Configuración de Hardware (local.conf)
+## Configuración de Hardware relevante
 
-```
-MACHINE = "raspberrypi5"
-arm_freq=1500       # CPU limitada a 1.5 GHz para ahorro de batería
-enable_uart=1       # UART hardware habilitado
-dtoverlay=disable-bt  # Bluetooth desactivado (libera UART principal)
-camera_auto_detect=1  # Detección automática cámara CSI
-VIDEO_CAMERA = "1"
-```
+| Parámetro | Valor | Efecto |
+|-----------|-------|--------|
+| `MACHINE` | raspberrypi5 | BSP target |
+| `arm_freq` | 1500 MHz | CPU limitada para ahorro de batería |
+| `enable_uart=1` | — | UART hardware habilitado |
+| `dtoverlay=disable-bt` | — | Bluetooth desactivado (libera UART PL011) |
+| `dtoverlay=imx219,cam0` | — | Cámara IMX219 en conector CAM0 (derecho) |
+| `camera_auto_detect=0` | — | Detección manual vía overlays explícitos |
