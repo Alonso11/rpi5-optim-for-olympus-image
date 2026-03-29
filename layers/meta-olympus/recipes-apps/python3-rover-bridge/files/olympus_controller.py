@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.5
+# Version: v0.6
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -30,6 +30,8 @@ import rover_bridge
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 PING_INTERVAL_S   = 1.0    # Max seconds between commands before sending PING
+CYCLE_WARN_MS     = 1500   # Umbral de advertencia de ciclo lento (RNF-001: ≤ 2000 ms)
+CYCLE_LOG_PERIOD  = 50     # Cada cuántos ciclos loguear tiempo a DEBUG
 FRAME_WIDTH       = 640
 FRAME_HEIGHT      = 480
 VISION_CONF_MIN   = 0.5    # Minimum detection confidence to act on
@@ -154,6 +156,10 @@ class OlympusLogger:
                     f"{tlm.safety:<6} stall={tlm.stall_mask:06b} "
                     f"batt={tlm.batt_mv}mV/{tlm.batt_ma}mA "
                     f"dist={tlm.dist_mm}mm t={tlm.tick_ms}ms")
+
+    def log_cycle(self, cycle_ms: float) -> None:
+        """Log periódico de tiempo de ciclo para verificación de RNF-001."""
+        self._write("DEBUG", "CYCLE", f"{cycle_ms:.1f} ms")
 
     def close(self) -> None:
         if self._file:
@@ -490,10 +496,13 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     log.info("CTRL", f"Starting in {mode.upper()} mode")
 
     last_cmd_time = 0.0
-    msm = RoverMSM()
+    msm        = RoverMSM()
+    cycle_count = 0
 
     try:
         while True:
+            cycle_start = time.monotonic()
+
             # Drenar TLM asíncrono pendiente antes de cualquier comando
             raw_tlm = rover.recv_tlm()
             if raw_tlm:
@@ -544,6 +553,16 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
             # In vision mode sleep briefly between frames
             if mode == "vision":
                 time.sleep(0.05)  # ~20 Hz max loop rate
+
+            # Medición de ciclo (RNF-001: ≤ 2000 ms)
+            cycle_ms = (time.monotonic() - cycle_start) * 1000
+            cycle_count += 1
+            if cycle_ms > CYCLE_WARN_MS:
+                log.warn("CYCLE",
+                         f"ciclo lento: {cycle_ms:.1f} ms "
+                         f"(umbral {CYCLE_WARN_MS} ms, RNF-001)")
+            elif cycle_count % CYCLE_LOG_PERIOD == 0:
+                log.log_cycle(cycle_ms)
 
     except (KeyboardInterrupt, SystemExit):
         log.info("CTRL", "Stopping — sending STB")
