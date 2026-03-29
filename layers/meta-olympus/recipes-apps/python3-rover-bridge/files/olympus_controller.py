@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.0
+# Version: v1.1
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -795,6 +795,11 @@ def main():
         action="store_true",
         help="Skip Arduino connection; print commands to stdout (testing without hardware)"
     )
+    parser.add_argument(
+        "--log-path",
+        default=OlympusLogger.DEFAULT_LOG_PATH,
+        help=f"Path for the HLC log file (default: {OlympusLogger.DEFAULT_LOG_PATH})"
+    )
     args = parser.parse_args()
 
     if args.dry_run:
@@ -815,7 +820,7 @@ def main():
         source = VisionSource(args.model)
 
     try:
-        run(rover, source, args.mode)
+        run(rover, source, args.mode, log_path=args.log_path)
     finally:
         if isinstance(source, VisionSource):
             source.release()
