@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.4
+# Version: v1.5
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -521,7 +521,6 @@ class VisionSource:
 
         # output[0] shape: (84, 8400) — 4 bbox coords + 80 class scores
         predictions = output[0].T     # → (8400, 84)
-        frame_area  = FRAME_WIDTH * FRAME_HEIGHT
 
         best_area = 0.0
         best_cx   = None
