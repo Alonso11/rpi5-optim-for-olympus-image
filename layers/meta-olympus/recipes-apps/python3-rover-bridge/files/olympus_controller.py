@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.2
+# Version: v1.3
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -596,8 +596,19 @@ class DryRunRover:
         "RST": "STB", "AVD:L": "AVD", "AVD:R": "AVD",
     }
 
+    # Synthetic TLM emitted every ~1 s to avoid false link-loss warnings
+    # during dry-run testing (recv_tlm returning None would trigger COMM-REQ-005
+    # after TLM_TIMEOUT_S seconds, which is confusing when there is no real link).
+    _TLM_INTERVAL_S = 1.0
+    _TLM_TEMPLATE   = (
+        "TLM:NORMAL:000000:{tick}ms:16000mV:500mA:"
+        "100:100:100:100:100:100:25C:25:25:25:25:25:25C:1000mm"
+    )
+
     def __init__(self):
-        self._state = "STB"
+        self._state        = "STB"
+        self._tick_ms      = 0
+        self._last_tlm_ts  = time.monotonic()
 
     def send_command(self, cmd):
         if cmd == "PING":
@@ -612,7 +623,16 @@ class DryRunRover:
         return "ERR:UNKNOWN"
 
     def recv_tlm(self):
-        """Dry-run: sin Arduino no hay TLM asíncrono."""
+        """
+        Emits a synthetic TLM frame every _TLM_INTERVAL_S seconds so that
+        the link-loss watchdog (TLM_TIMEOUT_S) does not fire during dry-run.
+        Returns None between intervals, mimicking the async behaviour of the LLC.
+        """
+        now = time.monotonic()
+        if now - self._last_tlm_ts >= self._TLM_INTERVAL_S:
+            self._tick_ms     += int((now - self._last_tlm_ts) * 1000)
+            self._last_tlm_ts  = now
+            return self._TLM_TEMPLATE.format(tick=self._tick_ms)
         return None
 
 
