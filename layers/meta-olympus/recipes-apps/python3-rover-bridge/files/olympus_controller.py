@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.8
+# Version: v0.9
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -22,6 +22,8 @@ import argparse
 import dataclasses
 import datetime
 import enum
+import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -225,17 +227,30 @@ class EnergyMonitor:
 class OlympusLogger:
     """
     Logger estructurado con timestamps ISO-8601 (SRS-061, CDH-REQ-002).
-    Escribe a stdout y a LOG_PATH (line-buffered, modo append).
+    Escribe a stdout y a LOG_PATH con rotación automática por tamaño.
+
+    Política de rotación (CDH-REQ-002 — ~2 h de retención mínima):
+      _MAX_BYTES    = 5 MB  → ~3–4 h de logs a ciclo 1 s
+      _BACKUP_COUNT = 1     → hlc.log + hlc.log.1 ≈ 7–8 h en disco
+
     Si el archivo no es accesible, continúa solo con stdout sin abortar.
     """
 
     DEFAULT_LOG_PATH = "/var/log/olympus/hlc.log"
+    _MAX_BYTES       = 5_000_000   # ~3–4 h de logs típicos
+    _BACKUP_COUNT    = 1           # un fichero de respaldo → ~7–8 h total en disco
 
     def __init__(self, log_path: str = DEFAULT_LOG_PATH):
-        self._file = None
+        self._handler = None
         try:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            self._file = open(log_path, "a", buffering=1)  # line-buffered
+            self._handler = logging.handlers.RotatingFileHandler(
+                log_path,
+                maxBytes=self._MAX_BYTES,
+                backupCount=self._BACKUP_COUNT,
+                encoding="utf-8",
+            )
+            self._handler.setFormatter(logging.Formatter("%(message)s"))
         except OSError as e:
             print(f"[Logger] Warning: no se puede abrir {log_path}: {e} — solo stdout")
 
@@ -245,8 +260,8 @@ class OlympusLogger:
         ts   = datetime.datetime.now().isoformat(timespec="milliseconds")
         line = f"[{ts}] [{level:<5}] [{component:<7}] {msg}"
         print(line)
-        if self._file:
-            self._file.write(line + "\n")
+        if self._handler:
+            self._handler.emit(logging.makeLogRecord({"msg": line}))
 
     # ── API pública ──────────────────────────────────────────────────────────
 
@@ -295,9 +310,9 @@ class OlympusLogger:
         self._write("DEBUG", "CYCLE", f"{cycle_ms:.1f} ms")
 
     def close(self) -> None:
-        if self._file:
-            self._file.close()
-            self._file = None
+        if self._handler:
+            self._handler.close()
+            self._handler = None
 
 
 # ─── Rover State Machine ─────────────────────────────────────────────────────
