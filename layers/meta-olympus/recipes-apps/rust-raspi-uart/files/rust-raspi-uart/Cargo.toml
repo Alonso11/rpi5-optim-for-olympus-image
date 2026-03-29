@@ -1,7 +1,0 @@
-[package]
-name = "rust-raspi-uart"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-serialport = "4.3.0"
