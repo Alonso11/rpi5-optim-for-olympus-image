@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.4
+# Version: v0.5
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -20,7 +20,9 @@
 
 import argparse
 import dataclasses
+import datetime
 import enum
+import os
 import sys
 import time
 import rover_bridge
@@ -92,6 +94,71 @@ class TlmFrame:
             )
         except (ValueError, IndexError):
             return None
+
+
+# ─── Logger ──────────────────────────────────────────────────────────────────
+
+class OlympusLogger:
+    """
+    Logger estructurado con timestamps ISO-8601 (SRS-061, CDH-REQ-002).
+    Escribe a stdout y a LOG_PATH (line-buffered, modo append).
+    Si el archivo no es accesible, continúa solo con stdout sin abortar.
+    """
+
+    DEFAULT_LOG_PATH = "/var/log/olympus/hlc.log"
+
+    def __init__(self, log_path: str = DEFAULT_LOG_PATH):
+        self._file = None
+        try:
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            self._file = open(log_path, "a", buffering=1)  # line-buffered
+        except OSError as e:
+            print(f"[Logger] Warning: no se puede abrir {log_path}: {e} — solo stdout")
+
+    # ── escritura interna ────────────────────────────────────────────────────
+
+    def _write(self, level: str, component: str, msg: str) -> None:
+        ts   = datetime.datetime.now().isoformat(timespec="milliseconds")
+        line = f"[{ts}] [{level:<5}] [{component:<7}] {msg}"
+        print(line)
+        if self._file:
+            self._file.write(line + "\n")
+
+    # ── API pública ──────────────────────────────────────────────────────────
+
+    def info(self, component: str, msg: str) -> None:
+        self._write("INFO", component, msg)
+
+    def warn(self, component: str, msg: str) -> None:
+        self._write("WARN", component, msg)
+
+    def log_transition(self, from_state, to_state, reason: str,
+                       warn: bool = False) -> None:
+        """
+        Auditoría de transición de estado MSM (SRS-061).
+        Registra estado_origen, estado_destino, razón y timestamp.
+        """
+        level = "WARN" if warn else "INFO"
+        self._write(level, "MSM",
+                    f"{from_state.value} → {to_state.value}  [{reason}]")
+
+    def log_cmd(self, cmd: str, kind: str, data) -> None:
+        """Log del comando enviado y la respuesta recibida del Arduino."""
+        resp = f"{data}" if data else kind.upper()
+        self._write("INFO", "CMD", f"{cmd:<16} → {kind}:{resp}" if data
+                    else f"{cmd:<16} → {kind}")
+
+    def log_tlm(self, tlm) -> None:
+        """Log compacto del frame TLM recibido (SyRS-030)."""
+        self._write("INFO", "TLM",
+                    f"{tlm.safety:<6} stall={tlm.stall_mask:06b} "
+                    f"batt={tlm.batt_mv}mV/{tlm.batt_ma}mA "
+                    f"dist={tlm.dist_mm}mm t={tlm.tick_ms}ms")
+
+    def close(self) -> None:
+        if self._file:
+            self._file.close()
+            self._file = None
 
 
 # ─── Rover State Machine ─────────────────────────────────────────────────────
@@ -396,37 +463,32 @@ class DryRunRover:
 
 # ─── Main loop ───────────────────────────────────────────────────────────────
 
-def _send(rover, cmd):
+def _send(rover, cmd, log=None):
     """
-    Send cmd, parse response, return (kind, data).
-    Logs the exchange. Returns ("timeout", None) or ("error", str) on failure.
+    Envía cmd, parsea respuesta, retorna (kind, data).
+    Si se pasa log (OlympusLogger) registra el intercambio.
+    Retorna ("timeout", None) o ("error", str) en caso de fallo.
     """
     try:
         raw = rover.send_command(cmd)
         kind, data = parse_response(raw)
-        if kind == "ack":
-            print(f"  {cmd:<16} → ACK:{data}")
-        elif kind == "pong":
-            print(f"  {cmd:<16} → PONG")
-        elif kind == "err_estop":
-            print(f"  {cmd:<16} → [ESTOP] rover in FAULT — send RST to recover")
-        elif kind == "err_wdog":
-            print(f"  {cmd:<16} → [WDOG]  watchdog fired — rover in FAULT")
-        elif kind == "err_unknown":
-            print(f"  {cmd:<16} → [UNKNOWN CMD]")
-        else:
-            print(f"  {cmd:<16} → {raw}")
+        if log:
+            log.log_cmd(cmd, kind, data)
         return kind, data
     except TimeoutError as e:
-        print(f"  {cmd:<16} → [TIMEOUT] {e}")
+        if log:
+            log.warn("CMD", f"{cmd:<16} → TIMEOUT: {e}")
         return "timeout", None
     except Exception as e:
-        print(f"  {cmd:<16} → [ERROR] {e}")
+        if log:
+            log.warn("CMD", f"{cmd:<16} → ERROR: {e}")
         return "error", str(e)
 
 
-def run(rover, source, mode):
-    print(f"\n[Controller] Starting in {mode.upper()} mode. Ctrl+C to stop.\n")
+def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
+    log = OlympusLogger(log_path)
+    log.info("CTRL", f"Starting in {mode.upper()} mode")
+
     last_cmd_time = 0.0
     msm = RoverMSM()
 
@@ -435,40 +497,48 @@ def run(rover, source, mode):
             # Drenar TLM asíncrono pendiente antes de cualquier comando
             raw_tlm = rover.recv_tlm()
             if raw_tlm:
-                TlmFrame.parse(raw_tlm)  # parseo listo para logging (paso 3)
+                tlm = TlmFrame.parse(raw_tlm)
+                if tlm:
+                    log.log_tlm(tlm)
 
             cmd = source.next_command()
 
             # Vision mode: camera error → safe stop
             if cmd is None and mode == "vision":
-                print("[Controller] Camera error — sending STB")
+                log.warn("CTRL", "Camera error — sending STB")
                 cmd = "STB"
 
             if cmd is not None:
                 if msm.blocks_command(cmd):
-                    print(f"  {cmd:<16} → [BLOCKED] rover in FAULT, send RST first")
+                    log.warn("CMD", f"{cmd:<16} → BLOCKED (rover in FAULT, send RST)")
                 else:
-                    kind, data = _send(rover, cmd)
+                    kind, data = _send(rover, cmd, log)
                     last_cmd_time = time.monotonic()
 
                     if kind == "ack" and data is not None:
                         new_state = RoverState.from_ack(data)
                         if new_state is not None:
+                            log.log_transition(msm.state, new_state, f"ACK:{data}")
                             msm.transition(new_state)
                     elif kind == "err_wdog":
+                        log.log_transition(msm.state, RoverState.FAULT,
+                                           "ERR:WDOG", warn=True)
                         msm.transition(RoverState.FAULT)
-                        print("  [Controller] Auto-sending RST to recover from watchdog...")
-                        kind2, data2 = _send(rover, "RST")
+                        log.info("CTRL", "Auto-sending RST to recover from watchdog")
+                        kind2, data2 = _send(rover, "RST", log)
                         if kind2 == "ack" and data2 is not None:
                             new_state = RoverState.from_ack(data2)
                             if new_state is not None:
+                                log.log_transition(msm.state, new_state, "RST")
                                 msm.transition(new_state)
                     elif kind == "err_estop":
+                        log.log_transition(msm.state, RoverState.FAULT,
+                                           "ERR:ESTOP", warn=True)
                         msm.transition(RoverState.FAULT)
 
             # Keepalive: PING if no command sent in the last PING_INTERVAL_S
             if time.monotonic() - last_cmd_time >= PING_INTERVAL_S:
-                kind, data = _send(rover, "PING")
+                _send(rover, "PING", log)
                 last_cmd_time = time.monotonic()
 
             # In vision mode sleep briefly between frames
@@ -476,11 +546,13 @@ def run(rover, source, mode):
                 time.sleep(0.05)  # ~20 Hz max loop rate
 
     except (KeyboardInterrupt, SystemExit):
-        print("\n[Controller] Stopping — sending STB...")
+        log.info("CTRL", "Stopping — sending STB")
         try:
             rover.send_command("STB")
         except Exception:
             pass
+    finally:
+        log.close()
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
