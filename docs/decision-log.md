@@ -177,16 +177,119 @@ Libcamera detecta automáticamente cuál está físicamente conectado.
 
 ---
 
-## Pendiente (al 25 mar 2026)
+---
+
+## Semana 4 — Formalización del protocolo y auditoría completa (27–29 mar 2026)
+
+### LLC audit — `rover-low-level-controller` (27 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-27 | Auditoría LLC v2.4 contra SRS: 64 tests verdes, sin gaps críticos | Verificar que el firmware implementa todos los requisitos del SRS antes de formalizar el HLC |
+| 2026-03-27 | Confirmar que HC-SR04 (D38/D39) y VL53L0X están manejados en LLC | El LLC dispara FAULT autónomamente (<200 mm / <150 mm) sin depender del HLC Python — capa de emergencia hardware |
+| 2026-03-27 | Confirmar que el watchdog LLC (~2 s, 100 ciclos × 20 ms) requiere PING periódico del HLC | Si el HLC no envía ningún comando en ~2 s el Arduino transiciona a FAULT; la capa Python debe enviar PING cada 1 s cuando está idle |
+
+### ICD LLC — Documento de interfaz Arduino ↔ RPi5 (27 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-27 | Crear `icd/icd_llc.tex` (v1.0, 376 líneas) en `srs_rover_olympus` | La interfaz UART entre LLC y HLC no estaba documentada formalmente; un ICD es requisito para trazabilidad ISO 29148 |
+| 2026-03-27 | Incluir: interfaz física, diccionario de comandos/respuestas, frame TLM extendido, tabla de estados MSM, timing y verificación | El ICD cubre todos los aspectos del protocolo MSM serie que el HLC debe implementar para cumplir RF-001…RF-006 |
+| 2026-03-27 | Integrar ICD via `\input{icd/icd_llc.tex}` en `s07_system_interfaces.tex` | Mantiene la estructura modular del documento SRS; el ICD puede revisarse sin tocar el cuerpo principal |
+| 2026-03-27 | Fix LaTeX: mover `\%` fuera del modo math (`$\pm 60$\,\%`) | Babel español es incompatible con `\%` dentro de `$...$` — error fatal "Incompatible glue units" |
+
+---
+
+### rover_bridge — `lib.rs` v1.4 → v1.5 (28 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-28 | Añadir `recv_tlm()` — lee una línea sin enviar comando (timeout 50 ms) | El Arduino emite frames TLM cada ~1 s de forma asíncrona; `send_command` no los puede recibir sin enviar primero. `recv_tlm` drena el buffer al inicio de cada ciclo del HLC |
+| 2026-03-28 | `recv_tlm` retorna `Some(frame)` solo si empieza por `TLM:`, `None` en cualquier otro caso | Descarta ACKs rezagados o basura sin elevar errores; el HLC consume solo lo que reconoce |
+| 2026-03-28 | Timeout de 50 ms en `recv_tlm` vs 300 ms en `send_command` | TLM es oportunista — si no hay frame en 50 ms se sigue con el ciclo; no se debe bloquear el loop principal |
+
+---
+
+### olympus_controller.py — Formalización v0.2 → v0.8 (28–29 mar 2026)
+
+Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer commit.
+
+#### v0.3 — RoverState + RoverMSM (commit `01e1f87`)
+
+| Decisión | Motivo |
+|---|---|
+| `RoverState` como `enum.Enum` con valores = string MSM (`"STB"`, `"EXP"`, …) | Los valores coinciden con los tokens del protocolo ICD; `from_ack()` mapea directamente sin lookup table adicional |
+| `RoverMSM` solo transiciona al recibir un `ACK` confirmado del Arduino | El HLC nunca asume estado por el comando enviado; el firmware puede rechazar una transición — la fuente de verdad es el ACK del LLC |
+| `blocks_command()`: en estado FAULT solo `RST` y `PING` son válidos | Implementa la restricción de la tabla de estados del ICD LLC §4; evitar enviar comandos de movimiento cuando el LLC está en FAULT |
+
+#### v0.4 — TlmFrame parser + recv_tlm wiring (commit `1331a28`)
+
+| Decisión | Motivo |
+|---|---|
+| `TlmFrame` como `@dataclasses.dataclass` con campos tipados | El frame TLM tiene 20 campos con unidades — un dataclass con parsing explícito es más seguro que un dict |
+| Parser: `split(":")`, 20 partes exactas, `rstrip` de unidades por campo | El ICD define el formato byte a byte; el parser lo replica fielmente y retorna `None` en lugar de lanzar excepciones |
+| Drenar TLM asíncrono al inicio de cada ciclo con `rover.recv_tlm()` | El Arduino emite TLM cada ~1 s independientemente de los comandos; si no se drena, el frame TLM puede aparecer mezclado con el ACK de un comando |
+
+#### v0.5 — OlympusLogger (commit `22d95f5`)
+
+| Decisión | Motivo |
+|---|---|
+| Formato: `[{ISO-8601}] [{LEVEL:<5}] [{COMPONENT:<7}] {msg}` | Formato estructurado con ancho fijo en nivel y componente facilita `grep` y parseo post-misión (CDH-REQ-002) |
+| Log a stdout **y** a fichero (`/var/log/olympus/hlc.log`) simultáneamente | stdout para debugging en tiempo real; fichero para análisis post-misión |
+| `buffering=1` (line-buffered) en el fichero | Garantiza que cada línea se escribe al disco inmediatamente; un crash del proceso no pierde el último ciclo |
+| Si el fichero no es accesible, continúa solo con stdout sin abortar | El rover no debe dejar de funcionar por un error de permisos en el sistema de ficheros |
+| Métodos especializados: `log_transition`, `log_cmd`, `log_tlm`, `log_energy`, `log_cycle` | Cada tipo de evento tiene su formato y componente; facilita filtrado con `grep MSM` / `grep EPS` |
+
+#### v0.6 — Medición de ciclo (commit `787f5ba`)
+
+| Decisión | Motivo |
+|---|---|
+| `CYCLE_WARN_MS = 1500` — warning si el ciclo supera 1.5 s | RNF-001 define ≤ 2000 ms; 1500 ms da margen de reacción antes de violar el requisito |
+| Log de ciclo cada `CYCLE_LOG_PERIOD = 50` ciclos (~50 s) en condiciones normales | Registrar cada ciclo satura el log; periodicidad 50 ciclos permite detectar tendencias de degradación sin ruido |
+
+#### v0.7 — WaypointTracker (commit `6dcc54e`)
+
+| Decisión | Motivo |
+|---|---|
+| Registrar waypoints solo en `EXPLORE` + safety `NORMAL` | Puntos en otros estados (AVD, RET) o con safety degradada no son "seguros" — guardarlos inducción a error |
+| FIFO de máx `MAX_WAYPOINTS = 5` entradas | Memoria acotada; solo interesan los últimos puntos conocidos como seguros (SyRS-061) |
+| `should_retreat()`: umbral táctico HLC a 300 mm | Complementa la capa de emergencia del LLC (< 200 mm → FAULT). El HLC reacciona antes (300 mm) enviando RET proactivamente, evitando que el LLC llegue a FAULT |
+| `getattr(msm_state, "value", None) != "EXP"` en `record()` | Evita dependencia circular de importación; `WaypointTracker` definido antes de `RoverState` en el archivo |
+
+#### v0.8 — EnergyMonitor (commit `3e7d896`)
+
+| Decisión | Motivo |
+|---|---|
+| `BATT_WARN_MV = 14000` (3.5 V/celda × 4S) — nivel WARN | Batería Li-ion en zona segura pero decreciente; alertar al operador (EPS-REQ-001) |
+| `BATT_CRITICAL_MV = 12800` (3.2 V/celda × 4S) — nivel CRITICAL | Por debajo de 3.2 V/celda el daño a celdas Li-ion es irreversible; forzar STB inmediato |
+| `batt_mv == 0` → ignorar sin cambiar nivel | El Arduino reporta 0 cuando el ADC no ha completado la primera lectura o hay error; no debe forzar un estado erróneo |
+| CRITICAL override STB con mayor prioridad que `should_retreat` (RET) | Un rover sin batería que sigue en movimiento puede dañar hardware; la batería crítica es más urgente que cualquier obstáculo táctico |
+| `log_energy()` usa nivel ERROR para CRITICAL, WARN para WARN, INFO para OK | Facilita alertas con `grep ERROR hlc.log` post-misión; diferencia visualmente la severidad |
+| `prev_energy` en `run()`: solo logea al cambiar de nivel | Evitar saturar el log con el mismo nivel cada 1 s de TLM |
+
+---
+
+## Pendiente (al 29 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
 |---|---|---|
 | ~~Limpiar `onnxruntime` de IMAGE_INSTALL y `bblayers.conf`~~ | ✅ Hecho | — |
 | ~~Exportar YOLOv8n a ONNX~~ | ✅ Hecho | — |
-| ~~Implementar `olympus_controller.py` (manual + vision)~~ | ✅ Hecho | — |
+| ~~Implementar `olympus_controller.py` (manual + vision)~~ | ✅ v0.8 | — |
 | ~~PR `feature/msm-main-integration` → `debug` en LLC repo~~ | ✅ PR #1 abierto | — |
 | ~~Verificar cámara IMX219 con rpicam-still~~ | ✅ 30 fps estable en CAM0 | — |
 | ~~Verificar test_opencv_camera.py~~ | ✅ Funciona | — |
+| ~~Crear ICD LLC en SRS (`icd/icd_llc.tex` v1.0)~~ | ✅ commit `2fe9f17` en srs repo | — |
+| ~~Añadir `recv_tlm()` a `rover_bridge` (lib.rs v1.5)~~ | ✅ commit `1331a28` | — |
+| ~~`RoverState` + `RoverMSM` (v0.3)~~ | ✅ commit `01e1f87` | — |
+| ~~`TlmFrame` parser (v0.4)~~ | ✅ commit `1331a28` | — |
+| ~~`OlympusLogger` (v0.5)~~ | ✅ commit `22d95f5` | — |
+| ~~Medición de ciclo RNF-001 (v0.6)~~ | ✅ commit `787f5ba` | — |
+| ~~`WaypointTracker` táctico HLC (v0.7)~~ | ✅ commit `6dcc54e` | — |
+| ~~`EnergyMonitor` EPS-REQ-001 (v0.8)~~ | ✅ commit `3e7d896` | — |
+| Log rotation — limitar `hlc.log` a ~2 h (CDH-REQ-002) | — | Media |
+| Link loss detection — N TLMs None → RET (COMM-REQ-005) | — | Media |
+| Exponer `--log-path` como argumento CLI | — | Baja |
 | Rebuild Yocto con `dtoverlay=imx219,cam0` (fix ya en recipe) | Requiere build en GCP VM | Media |
-| Flash firmware LLC al Arduino y probar protocolo MSM | Sin hardware conectado | Alta (bloqueante) |
+| Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
