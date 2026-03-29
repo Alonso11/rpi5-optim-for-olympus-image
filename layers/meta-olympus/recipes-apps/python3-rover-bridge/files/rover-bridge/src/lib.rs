@@ -1,4 +1,4 @@
-// Version: v1.4
+// Version: v1.5
 use pyo3::prelude::*;
 use serialport;
 use std::time::{Duration, Instant};
@@ -114,6 +114,46 @@ impl Rover {
             Ok(None)
         } else {
             Ok(Some(distance_mm))
+        }
+    }
+
+    /// Lee hasta una línea del puerto sin enviar comando (50 ms de timeout).
+    /// Retorna el frame si empieza por "TLM:", None en cualquier otro caso.
+    ///
+    /// Usar al inicio de cada ciclo del loop para drenar frames TLM asíncronos
+    /// emitidos por el firmware (~1 s). No bloquea el loop principal.
+    fn recv_tlm(&self) -> PyResult<Option<String>> {
+        let mut port = self.port.lock()
+            .map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Mutex error en puerto serie"))?;
+
+        let mut line = Vec::with_capacity(160);
+        let mut buf  = [0u8; 1];
+        let deadline = Instant::now() + Duration::from_millis(50);
+
+        loop {
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            match port.read(&mut buf) {
+                Ok(1) => {
+                    if buf[0] == b'\n' {
+                        if line.starts_with(b"TLM:") {
+                            let s = String::from_utf8_lossy(&line)
+                                .trim_end_matches('\r')
+                                .to_string();
+                            return Ok(Some(s));
+                        }
+                        // Llegó otra cosa (ACK rezagado, etc.) — descartar
+                        return Ok(None);
+                    }
+                    line.push(buf[0]);
+                }
+                Ok(_) => continue,
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => return Ok(None),
+                Err(e) => return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(
+                    format!("Error lectura recv_tlm: {}", e)
+                )),
+            }
         }
     }
 

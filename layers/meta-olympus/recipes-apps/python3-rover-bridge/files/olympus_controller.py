@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.3
+# Version: v0.4
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -19,6 +19,7 @@
 #   olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx
 
 import argparse
+import dataclasses
 import enum
 import sys
 import time
@@ -36,6 +37,62 @@ VISION_AREA_MIN   = 0.05   # Min bbox area as fraction of frame to act on
 ZONE_LEFT_END     = 0.33   # 0–33%  → obstacle left  → AVD:R
 ZONE_RIGHT_START  = 0.67   # 67–100% → obstacle right → AVD:L
 # Center zone (33–67%) → RET
+
+# ─── Telemetry Frame ─────────────────────────────────────────────────────────
+
+@dataclasses.dataclass
+class TlmFrame:
+    """
+    Frame de telemetría extendida emitido por el Arduino (~1 s).
+    Formato: TLM:<SAF>:<STALL>:<TS>ms:<MV>mV:<MA>mA:<I0>:<I1>:<I2>:<I3>:<I4>:<I5>:<T>C:<B0>:<B1>:<B2>:<B3>:<B4>:<B5>C:<DIST>mm
+    (Ref. ICD LLC §Frame de telemetría extendida, SyRS-030)
+    """
+    safety:     str        # "NORMAL" | "WARN" | "LIMIT" | "FAULT"
+    stall_mask: int        # 6 bits: bit5=FR … bit0=RL
+    tick_ms:    int        # ms desde boot del Arduino (contador monotónico)
+    batt_mv:    int        # tensión batería en mV  (0 = sin lectura)
+    batt_ma:    int        # corriente batería en mA con signo (0 = sin lectura)
+    currents:   list       # [FR, FL, CR, CL, RR, RL] mA
+    temp_c:     int        # temperatura ambiente °C
+    batt_temps: list       # [B1a, B1b, B2a, B2b, B3a, B3b] °C
+    dist_mm:    int        # distancia ToF en mm (0 = sin lectura)
+
+    @staticmethod
+    def parse(raw: str):
+        """
+        Parsea un frame TLM crudo (sin el \\n final).
+        Retorna TlmFrame o None si el formato no es válido.
+
+        Ejemplo:
+          TLM:NORMAL:000000:12340ms:11800mV:2350mA:200:210:195:205:180:190:24C:25:25:26:26:25:25C:450mm
+        """
+        # Índices de los campos tras split(':'):
+        # 0=TLM 1=SAF 2=STALL 3=TSms 4=MVmV 5=MAma
+        # 6..11=I0-I5  12=TC  13..17=B0-B4  18=B5C  19=DISTmm
+        try:
+            parts = raw.split(":")
+            if len(parts) != 20 or parts[0] != "TLM":
+                return None
+
+            safety     = parts[1]
+            stall_mask = int(parts[2], 2)          # "000101" → int
+            tick_ms    = int(parts[3].rstrip("ms"))
+            batt_mv    = int(parts[4].rstrip("mV"))
+            batt_ma    = int(parts[5].rstrip("mA"))
+            currents   = [int(parts[i]) for i in range(6, 12)]
+            temp_c     = int(parts[12].rstrip("C"))
+            batt_temps = [int(parts[i]) for i in range(13, 18)] + \
+                         [int(parts[18].rstrip("C"))]
+            dist_mm    = int(parts[19].rstrip("mm"))
+
+            return TlmFrame(
+                safety=safety, stall_mask=stall_mask, tick_ms=tick_ms,
+                batt_mv=batt_mv, batt_ma=batt_ma, currents=currents,
+                temp_c=temp_c, batt_temps=batt_temps, dist_mm=dist_mm,
+            )
+        except (ValueError, IndexError):
+            return None
+
 
 # ─── Rover State Machine ─────────────────────────────────────────────────────
 
@@ -332,6 +389,10 @@ class DryRunRover:
             return f"ACK:{new_state}"
         return "ERR:UNKNOWN"
 
+    def recv_tlm(self):
+        """Dry-run: sin Arduino no hay TLM asíncrono."""
+        return None
+
 
 # ─── Main loop ───────────────────────────────────────────────────────────────
 
@@ -371,6 +432,11 @@ def run(rover, source, mode):
 
     try:
         while True:
+            # Drenar TLM asíncrono pendiente antes de cualquier comando
+            raw_tlm = rover.recv_tlm()
+            if raw_tlm:
+                TlmFrame.parse(raw_tlm)  # parseo listo para logging (paso 3)
+
             cmd = source.next_command()
 
             # Vision mode: camera error → safe stop
