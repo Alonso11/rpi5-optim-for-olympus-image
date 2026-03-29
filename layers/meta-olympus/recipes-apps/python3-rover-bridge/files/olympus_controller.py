@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.9
+# Version: v1.0
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -32,6 +32,7 @@ import rover_bridge
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 PING_INTERVAL_S   = 1.0    # Max seconds between commands before sending PING
+TLM_TIMEOUT_S     = 5.0    # Seconds without TLM → link loss → force STB (COMM-REQ-005)
 CYCLE_WARN_MS     = 1500   # Umbral de advertencia de ciclo lento (RNF-001: ≤ 2000 ms)
 CYCLE_LOG_PERIOD  = 50     # Cada cuántos ciclos loguear tiempo a DEBUG
 RETREAT_DIST_MM   = 300    # Distancia táctica HLC para iniciar RET (> 200 mm del LLC)
@@ -643,12 +644,14 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     log = OlympusLogger(log_path)
     log.info("CTRL", f"Starting in {mode.upper()} mode")
 
-    last_cmd_time  = 0.0
-    msm            = RoverMSM()
-    tracker        = WaypointTracker()
-    energy         = EnergyMonitor()
-    prev_energy    = EnergyLevel.OK
-    cycle_count    = 0
+    last_cmd_time   = 0.0
+    last_tlm_time   = time.monotonic()
+    tlm_loss_active = False
+    msm             = RoverMSM()
+    tracker         = WaypointTracker()
+    energy          = EnergyMonitor()
+    prev_energy     = EnergyLevel.OK
+    cycle_count     = 0
 
     try:
         while True:
@@ -658,6 +661,10 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
             raw_tlm = rover.recv_tlm()
             tlm_override = None
             if raw_tlm:
+                last_tlm_time = time.monotonic()
+                if tlm_loss_active:
+                    log.info("COMM", "TLM restablecido — enlace recuperado")
+                    tlm_loss_active = False
                 tlm = TlmFrame.parse(raw_tlm)
                 if tlm:
                     log.log_tlm(tlm)
@@ -682,6 +689,14 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                                  f"(< {RETREAT_DIST_MM} mm) — forzando RET "
                                  f"[{wp_info}]")
                         tlm_override = "RET"
+            elif time.monotonic() - last_tlm_time > TLM_TIMEOUT_S:
+                # Pérdida de enlace serie — forzar STB hasta recuperar TLM
+                if not tlm_loss_active:
+                    log.warn("COMM",
+                             f"sin TLM por {TLM_TIMEOUT_S:.0f}+ s — "
+                             f"forzando STB (COMM-REQ-005)")
+                    tlm_loss_active = True
+                tlm_override = "STB"
 
             cmd = tlm_override or source.next_command()
 
