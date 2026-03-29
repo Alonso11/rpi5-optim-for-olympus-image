@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.1
+# Version: v1.2
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -644,7 +644,7 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     log = OlympusLogger(log_path)
     log.info("CTRL", f"Starting in {mode.upper()} mode")
 
-    last_cmd_time   = 0.0
+    last_cmd_time   = time.monotonic()
     last_tlm_time   = time.monotonic()
     tlm_loss_active = False
     msm             = RoverMSM()
