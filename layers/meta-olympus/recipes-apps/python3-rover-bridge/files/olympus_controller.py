@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.6
+# Version: v0.7
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -32,6 +32,8 @@ import rover_bridge
 PING_INTERVAL_S   = 1.0    # Max seconds between commands before sending PING
 CYCLE_WARN_MS     = 1500   # Umbral de advertencia de ciclo lento (RNF-001: ≤ 2000 ms)
 CYCLE_LOG_PERIOD  = 50     # Cada cuántos ciclos loguear tiempo a DEBUG
+RETREAT_DIST_MM   = 300    # Distancia táctica HLC para iniciar RET (> 200 mm del LLC)
+MAX_WAYPOINTS     = 5      # Últimos N waypoints seguros a retener (SyRS-061)
 FRAME_WIDTH       = 640
 FRAME_HEIGHT      = 480
 VISION_CONF_MIN   = 0.5    # Minimum detection confidence to act on
@@ -96,6 +98,73 @@ class TlmFrame:
             )
         except (ValueError, IndexError):
             return None
+
+
+# ─── Waypoint Tracker ────────────────────────────────────────────────────────
+
+@dataclasses.dataclass
+class Waypoint:
+    """Instantánea de un punto seguro registrado durante exploración (SyRS-061)."""
+    tick_ms: int          # timestamp Arduino en ms (contador monotónico del firmware)
+    state:   object       # RoverState en el momento del registro
+    dist_mm: int          # distancia frontal ToF en mm
+    batt_mv: int          # tensión batería en mV
+
+
+class WaypointTracker:
+    """
+    Registra los últimos MAX_WAYPOINTS puntos seguros visitados durante EXPLORE
+    con safety NORMAL (SyRS-061). Detecta condiciones tácticas de retreat a nivel
+    HLC antes de que el Arduino dispare el FAULT de emergencia.
+
+    Capas de protección de distancia:
+      LLC (hardware):  < 200 mm (HC-SR04) o < 150 mm (VL53L0X) → FAULT inmediato
+      HLC (táctica):   < RETREAT_DIST_MM (300 mm)               → RET proactivo
+    """
+
+    def __init__(self, max_waypoints: int = MAX_WAYPOINTS,
+                 retreat_dist_mm: int = RETREAT_DIST_MM):
+        self._points: list        = []
+        self._max: int            = max_waypoints
+        self._retreat_dist: int   = retreat_dist_mm
+
+    # ── registro ─────────────────────────────────────────────────────────────
+
+    def record(self, tlm, msm_state) -> None:
+        """
+        Guarda un waypoint si el rover está en EXPLORE con safety NORMAL.
+        Mantiene como máximo MAX_WAYPOINTS entradas (FIFO).
+        """
+        if getattr(msm_state, "value", None) != "EXP":
+            return
+        if tlm.safety != "NORMAL":
+            return
+        wp = Waypoint(
+            tick_ms=tlm.tick_ms,
+            state=msm_state,
+            dist_mm=tlm.dist_mm,
+            batt_mv=tlm.batt_mv,
+        )
+        self._points.append(wp)
+        if len(self._points) > self._max:
+            self._points.pop(0)
+
+    # ── consulta ─────────────────────────────────────────────────────────────
+
+    def last_safe(self):
+        """Retorna el waypoint seguro más reciente, o None si no hay ninguno."""
+        return self._points[-1] if self._points else None
+
+    def count(self) -> int:
+        return len(self._points)
+
+    def should_retreat(self, tlm) -> bool:
+        """
+        True si la distancia frontal es menor que el umbral táctico HLC
+        y hay una lectura válida (dist_mm > 0).
+        Solo activo cuando dist_mm > 0 (0 = sin lectura del VL53L0X).
+        """
+        return tlm.dist_mm > 0 and tlm.dist_mm < self._retreat_dist
 
 
 # ─── Logger ──────────────────────────────────────────────────────────────────
@@ -496,8 +565,9 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     log.info("CTRL", f"Starting in {mode.upper()} mode")
 
     last_cmd_time = 0.0
-    msm        = RoverMSM()
-    cycle_count = 0
+    msm           = RoverMSM()
+    tracker       = WaypointTracker()
+    cycle_count   = 0
 
     try:
         while True:
@@ -505,12 +575,23 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
 
             # Drenar TLM asíncrono pendiente antes de cualquier comando
             raw_tlm = rover.recv_tlm()
+            tlm_override = None
             if raw_tlm:
                 tlm = TlmFrame.parse(raw_tlm)
                 if tlm:
                     log.log_tlm(tlm)
+                    tracker.record(tlm, msm.state)
+                    if tracker.should_retreat(tlm):
+                        wp = tracker.last_safe()
+                        wp_info = (f"last_safe tick={wp.tick_ms}ms dist={wp.dist_mm}mm"
+                                   if wp else "no waypoint previo")
+                        log.warn("NAV",
+                                 f"obstáculo táctico a {tlm.dist_mm} mm "
+                                 f"(< {RETREAT_DIST_MM} mm) — forzando RET "
+                                 f"[{wp_info}]")
+                        tlm_override = "RET"
 
-            cmd = source.next_command()
+            cmd = tlm_override or source.next_command()
 
             # Vision mode: camera error → safe stop
             if cmd is None and mode == "vision":
