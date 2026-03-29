@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.3
+# Version: v1.4
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -752,6 +752,8 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                         log.log_transition(msm.state, RoverState.FAULT,
                                            "ERR:ESTOP", warn=True)
                         msm.transition(RoverState.FAULT)
+                    elif kind == "err_unknown":
+                        log.warn("CMD", f"{cmd:<16} → ERR:UNKNOWN (comando no reconocido por firmware)")
 
             # Keepalive: PING if no command sent in the last PING_INTERVAL_S
             if time.monotonic() - last_cmd_time >= PING_INTERVAL_S:
