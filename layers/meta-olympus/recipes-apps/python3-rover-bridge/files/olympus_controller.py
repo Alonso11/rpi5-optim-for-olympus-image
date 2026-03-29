@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v0.2
+# Version: v0.3
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -19,6 +19,7 @@
 #   olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx
 
 import argparse
+import enum
 import sys
 import time
 import rover_bridge
@@ -35,6 +36,59 @@ VISION_AREA_MIN   = 0.05   # Min bbox area as fraction of frame to act on
 ZONE_LEFT_END     = 0.33   # 0–33%  → obstacle left  → AVD:R
 ZONE_RIGHT_START  = 0.67   # 67–100% → obstacle right → AVD:L
 # Center zone (33–67%) → RET
+
+# ─── Rover State Machine ─────────────────────────────────────────────────────
+
+class RoverState(enum.Enum):
+    STANDBY = "STB"
+    EXPLORE = "EXP"
+    AVOID   = "AVD"
+    RETREAT = "RET"
+    FAULT   = "FLT"
+
+    @staticmethod
+    def from_ack(label: str):
+        for s in RoverState:
+            if s.value == label:
+                return s
+        return None
+
+
+class RoverMSM:
+    """
+    Espejo local del estado MSM del Arduino (SyRS-060, SRS-061).
+
+    Registra el estado actual y el tiempo de entrada para auditoría
+    de transiciones. Solo hace transición al recibir un ACK confirmado
+    del Arduino — nunca por inferencia del comando enviado.
+    """
+
+    def __init__(self):
+        self._state:   RoverState = RoverState.STANDBY
+        self._entered: float      = time.monotonic()
+
+    @property
+    def state(self) -> RoverState:
+        return self._state
+
+    def transition(self, new_state: RoverState) -> None:
+        """Registra una transición confirmada por ACK del Arduino."""
+        self._state   = new_state
+        self._entered = time.monotonic()
+
+    def time_in_state(self) -> float:
+        """Segundos transcurridos en el estado actual."""
+        return time.monotonic() - self._entered
+
+    def blocks_command(self, cmd: str) -> bool:
+        """
+        True si el comando debe bloquearse en el estado actual.
+        En FAULT solo RST y PING son válidos (ICD LLC §Tabla de estados).
+        """
+        if self._state == RoverState.FAULT:
+            return cmd not in ("RST", "PING")
+        return False
+
 
 # ─── Command Sources ─────────────────────────────────────────────────────────
 
@@ -313,7 +367,7 @@ def _send(rover, cmd):
 def run(rover, source, mode):
     print(f"\n[Controller] Starting in {mode.upper()} mode. Ctrl+C to stop.\n")
     last_cmd_time = 0.0
-    rover_state   = "STB"   # local mirror of rover MSM state
+    msm = RoverMSM()
 
     try:
         while True:
@@ -325,24 +379,26 @@ def run(rover, source, mode):
                 cmd = "STB"
 
             if cmd is not None:
-                # If rover is in FAULT only RST is useful — block movement commands
-                if rover_state == "FLT" and cmd not in ("RST", "PING"):
+                if msm.blocks_command(cmd):
                     print(f"  {cmd:<16} → [BLOCKED] rover in FAULT, send RST first")
                 else:
                     kind, data = _send(rover, cmd)
                     last_cmd_time = time.monotonic()
 
-                    if kind == "ack":
-                        rover_state = data
+                    if kind == "ack" and data is not None:
+                        new_state = RoverState.from_ack(data)
+                        if new_state is not None:
+                            msm.transition(new_state)
                     elif kind == "err_wdog":
-                        # Watchdog fired: rover is now in FAULT. Auto-recover.
-                        rover_state = "FLT"
+                        msm.transition(RoverState.FAULT)
                         print("  [Controller] Auto-sending RST to recover from watchdog...")
                         kind2, data2 = _send(rover, "RST")
-                        if kind2 == "ack":
-                            rover_state = data2
+                        if kind2 == "ack" and data2 is not None:
+                            new_state = RoverState.from_ack(data2)
+                            if new_state is not None:
+                                msm.transition(new_state)
                     elif kind == "err_estop":
-                        rover_state = "FLT"
+                        msm.transition(RoverState.FAULT)
 
             # Keepalive: PING if no command sent in the last PING_INTERVAL_S
             if time.monotonic() - last_cmd_time >= PING_INTERVAL_S:
