@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.5
+# Version: v1.6
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -140,7 +140,7 @@ class WaypointTracker:
         Guarda un waypoint si el rover está en EXPLORE con safety NORMAL.
         Mantiene como máximo MAX_WAYPOINTS entradas (FIFO).
         """
-        if getattr(msm_state, "value", None) != "EXP":
+        if msm_state != RoverState.EXPLORE:
             return
         if tlm.safety != "NORMAL":
             return
