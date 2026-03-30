@@ -10,6 +10,7 @@ SRC_URI = "file://rover-bridge/ \
            file://test_ultrasonic_rpi.py \
            file://test_opencv_camera.py \
            file://olympus_controller.py \
+           file://test_smoke.py \
            file://yolov8n.onnx \
            file://yolov8n-seg.onnx \
            file://configs/olympus_controller.yaml"
@@ -50,6 +51,7 @@ do_install() {
 
     # Instalamos los scripts de prueba en /usr/bin de la RPi
     install -d ${D}${bindir}
+    install -m 0755 ${WORKDIR}/test_smoke.py ${D}${bindir}/test_smoke.py
     install -m 0755 ${WORKDIR}/test_rover.py ${D}${bindir}/test_rover.py
     install -m 0755 ${WORKDIR}/test_bridge.py ${D}${bindir}/test_bridge.py
     install -m 0755 ${WORKDIR}/test_bridge_interactive.py ${D}${bindir}/test_bridge_interactive.py
@@ -66,6 +68,7 @@ do_install() {
 }
 
 FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
+                ${bindir}/test_smoke.py \
                 ${bindir}/test_rover.py \
                 ${bindir}/test_bridge.py \
                 ${bindir}/test_bridge_interactive.py \
