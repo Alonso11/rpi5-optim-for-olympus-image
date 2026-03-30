@@ -370,5 +370,6 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
 | ~~SYS-FUN-021 — link loss escalation warn→RET→STB (v2.0)~~ | ✅ commit `9d251d2` | — |
 | ~~SYS-FUN-040/041 — clase SafeMode HLC (v2.1)~~ | ✅ commit `e95f43e` | — |
-| ~~SYS-FUN-050/051 — shutdown seguro: STB+ACK + fsync (v2.2)~~ | ✅ commit pendiente | — |
+| ~~SYS-FUN-050/051 — shutdown seguro: STB+ACK + fsync (v2.2)~~ | ✅ commit `44611b6` | — |
+| ~~RNF-004 / SRS-014 / SyRS-017 — ThermalMonitor + disco + TLM delta (v2.3)~~ | ✅ commit pendiente | — |
 | ~~Implementar `VisionSource` con YOLOv8n-seg + grilla de ocupación (GNC-REQ-002)~~ | ✅ commit `8aef39e` | — |

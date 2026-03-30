@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v2.2
+# Version: v2.3
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -80,7 +80,15 @@ ZONE_LEFT_END     = float(_cfg.get("zone_left_end",     0.33))  # 0–33%  → o
 ZONE_RIGHT_START  = float(_cfg.get("zone_right_start",  0.67))  # 67–100% → obstacle right → AVD:L
 # Center zone (33–67%) → RET
 
-SLIP_STALL_FRAMES = int  (_cfg.get("slip_stall_frames",  2))    # Frames TLM consecutivos con stall → RET (RF-004)
+SLIP_STALL_FRAMES    = int  (_cfg.get("slip_stall_frames",    2))    # Frames TLM consecutivos con stall → RET (RF-004)
+
+TEMP_WARN_C          = int  (_cfg.get("temp_warn_c",          45))   # °C ambiente → advertencia (RNF-004)
+TEMP_CRIT_C          = int  (_cfg.get("temp_crit_c",          60))   # °C ambiente → Safe Mode (RNF-004)
+
+STORAGE_MIN_MB       = int  (_cfg.get("storage_min_mb",       50))   # MB libres mínimos en /var/log (SRS-014)
+STORAGE_CHECK_CYCLES = int  (_cfg.get("storage_check_cycles", 300))  # Cada cuántos ciclos verificar disco
+
+TLM_INTERVAL_WARN_S  = float(_cfg.get("tlm_interval_warn_s",  2.0))  # Delta entre TLMs > este valor → warn (SyRS-017)
 
 EXP_SPEED_L       = int  (_cfg.get("exp_speed_l",        40))   # Velocidad izquierda en exploración (-99–99)
 EXP_SPEED_R       = int  (_cfg.get("exp_speed_r",        40))   # Velocidad derecha en exploración (-99–99)
@@ -313,6 +321,59 @@ class SlipMonitor:
         return self._count
 
 
+# ─── Thermal Monitor ─────────────────────────────────────────────────────────
+
+class ThermalLevel(enum.Enum):
+    OK       = "OK"
+    WARN     = "WARN"
+    CRITICAL = "CRITICAL"
+
+
+class ThermalMonitor:
+    """
+    Supervisa temperatura ambiente desde el campo temp_c del TLM (RNF-004).
+
+    El sensor es el LM335 conectado al Arduino (A6). Umbrales por defecto
+    alineados con el SRS (RNF-004):
+      OK       : temp_c < TEMP_WARN_C (45 °C)
+      WARN     : TEMP_WARN_C ≤ temp_c < TEMP_CRIT_C  → advertencia al operador
+      CRITICAL : temp_c ≥ TEMP_CRIT_C (60 °C)        → activa SafeMode
+
+    Solo logea al cambiar de nivel (mismo patrón que EnergyMonitor).
+    temp_c == 0 significa sin lectura — se ignora sin cambiar el nivel.
+    """
+
+    def __init__(self,
+                 warn_c: int = TEMP_WARN_C,
+                 crit_c: int = TEMP_CRIT_C):
+        self._warn_c: int          = warn_c
+        self._crit_c: int          = crit_c
+        self._level:  ThermalLevel = ThermalLevel.OK
+
+    @property
+    def level(self) -> ThermalLevel:
+        return self._level
+
+    def update(self, tlm) -> ThermalLevel:
+        """
+        Evalúa temp_c del TLM y actualiza el nivel.
+        Retorna el nivel resultante.
+        """
+        t = tlm.temp_c
+        if t == 0:
+            return self._level
+
+        if t >= self._crit_c:
+            new_level = ThermalLevel.CRITICAL
+        elif t >= self._warn_c:
+            new_level = ThermalLevel.WARN
+        else:
+            new_level = ThermalLevel.OK
+
+        self._level = new_level
+        return self._level
+
+
 # ─── Safe Mode ───────────────────────────────────────────────────────────────
 
 class SafeMode:
@@ -358,11 +419,17 @@ class SafeMode:
         """True únicamente en el ciclo en que Safe Mode se activó por primera vez."""
         return self._just_activated
 
-    def update(self, tlm, e_level: "EnergyLevel") -> bool:
+    def update(self, tlm, e_level: "EnergyLevel",
+               t_level: "ThermalLevel") -> bool:
         """
         Evalúa condiciones de activación con el último TLM.
         Retorna True si Safe Mode está (o acaba de quedar) activo.
         Una vez activo no se desactiva aquí — usar reset().
+
+        Condiciones de activación (SYS-FUN-040, RNF-004):
+          - Batería crítica   : e_level == EnergyLevel.CRITICAL
+          - LLC en FAULT      : tlm.safety == "FAULT"
+          - Temperatura crítica: t_level == ThermalLevel.CRITICAL
         """
         self._just_activated = False
 
@@ -377,6 +444,10 @@ class SafeMode:
             self._active         = True
             self._just_activated = True
             self._reason = f"LLC en FAULT (safety={tlm.safety})"
+        elif t_level == ThermalLevel.CRITICAL:
+            self._active         = True
+            self._just_activated = True
+            self._reason = f"temperatura crítica ({tlm.temp_c} °C ≥ {TEMP_CRIT_C} °C)"
 
         return self._active
 
@@ -1006,8 +1077,12 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     tracker         = WaypointTracker()
     energy          = EnergyMonitor()
     slip            = SlipMonitor()
+    thermal         = ThermalMonitor()
     safe_mode       = SafeMode()
     prev_energy     = EnergyLevel.OK
+    prev_thermal    = ThermalLevel.OK
+    last_tlm_ts     = time.monotonic()   # para SyRS-017 (delta entre TLMs)
+    last_storage_check = 0               # ciclo del último check de disco
     cycle_count     = 0
 
     try:
@@ -1027,14 +1102,37 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                     log.log_tlm(tlm)
                     tracker.record(tlm, msm.state)
 
+                    # SyRS-017 — verificar frecuencia TLM ≥ 1 Hz
+                    now_ts      = time.monotonic()
+                    tlm_delta_s = now_ts - last_tlm_ts
+                    last_tlm_ts = now_ts
+                    if tlm_delta_s > TLM_INTERVAL_WARN_S:
+                        log.warn("COMM",
+                                 f"TLM tardío: delta={tlm_delta_s:.1f} s "
+                                 f"(esperado ≤ {TLM_INTERVAL_WARN_S:.0f} s) — "
+                                 f"posible degradación de enlace (SyRS-017)")
+
                     # Supervisión de energía — logea solo al cambiar de nivel
                     e_level = energy.update(tlm)
                     if e_level != prev_energy:
                         log.log_energy(e_level, tlm.batt_mv)
                         prev_energy = e_level
 
+                    # Supervisión térmica — logea solo al cambiar de nivel (RNF-004)
+                    t_level = thermal.update(tlm)
+                    if t_level != prev_thermal:
+                        lvl_str = t_level.value
+                        msg = f"temperatura {tlm.temp_c} °C — nivel {lvl_str}"
+                        if t_level == ThermalLevel.CRITICAL:
+                            log.warn("THERM", msg)
+                        elif t_level == ThermalLevel.WARN:
+                            log.warn("THERM", msg)
+                        else:
+                            log.info("THERM", msg)
+                        prev_thermal = t_level
+
                     # Prioridad de override: SafeMode > retreat > slip
-                    if safe_mode.update(tlm, e_level):
+                    if safe_mode.update(tlm, e_level, t_level):
                         if safe_mode.just_activated:
                             log.warn("EPS",
                                      f"SAFE MODE activado — {safe_mode.reason} "
@@ -1142,6 +1240,21 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                          f"(umbral {CYCLE_WARN_MS} ms, RNF-001)")
             elif cycle_count % CYCLE_LOG_PERIOD == 0:
                 log.log_cycle(cycle_ms)
+
+            # SRS-014 — monitoreo de espacio en disco cada STORAGE_CHECK_CYCLES ciclos
+            if cycle_count - last_storage_check >= STORAGE_CHECK_CYCLES:
+                last_storage_check = cycle_count
+                try:
+                    log_dir = os.path.dirname(OlympusLogger.DEFAULT_LOG_PATH)
+                    st      = os.statvfs(log_dir)
+                    free_mb = (st.f_bavail * st.f_frsize) / 1_000_000
+                    if free_mb < STORAGE_MIN_MB:
+                        log.warn("CDH",
+                                 f"espacio en disco bajo: {free_mb:.1f} MB libres "
+                                 f"(mínimo {STORAGE_MIN_MB} MB) — "
+                                 f"riesgo de pérdida de logs (SRS-014)")
+                except OSError:
+                    pass  # sistema de archivos no accesible
 
     except (KeyboardInterrupt, SystemExit):
         # ── Shutdown sequence (SYS-FUN-050 / SYS-FUN-051) ───────────────────

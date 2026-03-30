@@ -45,6 +45,27 @@ max_waypoints: 5
 # 2 frames × ~1 s/frame = reacción en ~2 s.
 slip_stall_frames: 2
 
+# ─── Temperatura (RNF-004) ───────────────────────────────────────────────────
+# Sensor: LM335 en Arduino A6 (temperatura ambiente del chasis).
+# El SRS exige operación ≤ 45 °C ambiente y chasis ≤ 60 °C.
+# CALIBRAR EN CAMPO si el sensor tiene offset respecto a la temperatura real.
+temp_warn_c: 45    # °C → advertencia al operador
+temp_crit_c: 60    # °C → activa Safe Mode (RNF-004)
+
+# ─── Almacenamiento (SRS-014) ─────────────────────────────────────────────────
+# MB libres mínimos en /var/log antes de emitir advertencia de disco lleno.
+# Estimado: ~2 h de logs ≈ 2–3 MB → 50 MB da margen amplio.
+storage_min_mb: 50
+
+# Cada cuántos ciclos verificar espacio en disco (evita syscall en cada ciclo).
+# 300 ciclos × ~1 s/ciclo = verificación cada ~5 min.
+storage_check_cycles: 300
+
+# ─── Frecuencia TLM (SyRS-017) ───────────────────────────────────────────────
+# Delta máximo entre frames TLM consecutivos antes de advertir.
+# El Arduino emite TLM cada ~1 s. Un delta > 2 s sugiere degradación de enlace.
+tlm_interval_warn_s: 2.0
+
 # ─── Batería — 4S Li-ion (EPS-REQ-001) ──────────────────────────────────────
 # 3.5 V/celda × 4S = 14.0 V → nivel WARN, notificar al operador.
 batt_warn_mv: 14000
