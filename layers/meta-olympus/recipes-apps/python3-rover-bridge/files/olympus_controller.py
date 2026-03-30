@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v2.0
+# Version: v2.1
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -311,6 +311,84 @@ class SlipMonitor:
     @property
     def stall_count(self) -> int:
         return self._count
+
+
+# ─── Safe Mode ───────────────────────────────────────────────────────────────
+
+class SafeMode:
+    """
+    Estado de seguridad HLC-only (SYS-FUN-040/041).
+
+    Safe Mode es un estado gestionado por el HLC — el Arduino no lo conoce.
+    Se activa ante dos condiciones definidas en el SRS:
+      1. Batería crítica: EnergyLevel.CRITICAL (batt_mv < BATT_CRITICAL_MV)
+      2. LLC en FAULT:    tlm.safety == "FAULT" (HC-SR04, stall o FLT forzado)
+
+    La condición de latencia C&DH >5s (SYS-FUN-040) está cubierta por el
+    escalado de link loss (tlm_retreat_s / tlm_stb_s) en el loop principal.
+
+    Comportamiento en Safe Mode (SYS-FUN-041):
+      - Solo STB y PING permitidos (actuadores de tracción desenergizados)
+      - Cualquier comando de movimiento (EXP/AVD/RET) es bloqueado
+      - El watchdog Arduino se mantiene vivo con PING periódicos
+      - Se loguea la causa en cada activación
+
+    Salida: solo mediante reset() explícito del operador (comando RST).
+    Una vez activo, no se desactiva automáticamente aunque la batería suba
+    o el LLC salga de FAULT — requiere intervención humana.
+
+    Prioridad en el loop: SafeMode > retreat > slip > comando fuente.
+    """
+
+    def __init__(self):
+        self._active:         bool = False
+        self._reason:         str  = ""
+        self._just_activated: bool = False
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @property
+    def reason(self) -> str:
+        return self._reason
+
+    @property
+    def just_activated(self) -> bool:
+        """True únicamente en el ciclo en que Safe Mode se activó por primera vez."""
+        return self._just_activated
+
+    def update(self, tlm, e_level: "EnergyLevel") -> bool:
+        """
+        Evalúa condiciones de activación con el último TLM.
+        Retorna True si Safe Mode está (o acaba de quedar) activo.
+        Una vez activo no se desactiva aquí — usar reset().
+        """
+        self._just_activated = False
+
+        if self._active:
+            return True
+
+        if e_level == EnergyLevel.CRITICAL:
+            self._active         = True
+            self._just_activated = True
+            self._reason = f"batería crítica ({tlm.batt_mv} mV < {BATT_CRITICAL_MV} mV)"
+        elif tlm.safety == "FAULT":
+            self._active         = True
+            self._just_activated = True
+            self._reason = f"LLC en FAULT (safety={tlm.safety})"
+
+        return self._active
+
+    def reset(self) -> None:
+        """Desactiva Safe Mode — solo por reset explícito del operador (RST)."""
+        self._active         = False
+        self._reason         = ""
+        self._just_activated = False
+
+    def blocks_command(self, cmd: str) -> bool:
+        """True si el comando debe bloquearse estando en Safe Mode."""
+        return self._active and cmd not in ("STB", "PING", "RST")
 
 
 # ─── Logger ──────────────────────────────────────────────────────────────────
@@ -915,6 +993,7 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     tracker         = WaypointTracker()
     energy          = EnergyMonitor()
     slip            = SlipMonitor()
+    safe_mode       = SafeMode()
     prev_energy     = EnergyLevel.OK
     cycle_count     = 0
 
@@ -941,9 +1020,12 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                         log.log_energy(e_level, tlm.batt_mv)
                         prev_energy = e_level
 
-                    # Prioridad de override: CRITICAL > should_retreat > slip
-                    if e_level == EnergyLevel.CRITICAL:
-                        log.warn("EPS", "batería crítica — forzando STB")
+                    # Prioridad de override: SafeMode > retreat > slip
+                    if safe_mode.update(tlm, e_level):
+                        if safe_mode.just_activated:
+                            log.warn("EPS",
+                                     f"SAFE MODE activado — {safe_mode.reason} "
+                                     f"(SYS-FUN-040) — solo STB/PING permitidos")
                         tlm_override = "STB"
                         slip.reset()
                     elif tracker.should_retreat(tlm):
@@ -995,7 +1077,9 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                 cmd = "STB"
 
             if cmd is not None:
-                if msm.blocks_command(cmd):
+                if safe_mode.blocks_command(cmd):
+                    log.warn("CMD", f"{cmd:<16} → BLOCKED (Safe Mode activo — {safe_mode.reason})")
+                elif msm.blocks_command(cmd):
                     log.warn("CMD", f"{cmd:<16} → BLOCKED (rover in FAULT, send RST)")
                 else:
                     kind, data = _send(rover, cmd, log)
@@ -1006,6 +1090,9 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                         if new_state is not None:
                             log.log_transition(msm.state, new_state, f"ACK:{data}")
                             msm.transition(new_state)
+                        if cmd == "RST":
+                            safe_mode.reset()
+                            log.info("EPS", "Safe Mode desactivado por RST del operador")
                     elif kind == "err_wdog":
                         log.log_transition(msm.state, RoverState.FAULT,
                                            "ERR:WDOG", warn=True)
