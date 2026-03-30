@@ -1,4 +1,4 @@
-# Version: v1.2
+# Version: v1.3
 SUMMARY = "Extensión nativa de Python en Rust para control de Rover (Olympus Bridge)"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
@@ -10,7 +10,8 @@ SRC_URI = "file://rover-bridge/ \
            file://test_ultrasonic_rpi.py \
            file://test_opencv_camera.py \
            file://olympus_controller.py \
-           file://yolov8n.onnx"
+           file://yolov8n.onnx \
+           file://configs/olympus_controller.yaml"
 
 # El código está en la subcarpeta rover-bridge
 S = "${WORKDIR}/rover-bridge"
@@ -19,7 +20,7 @@ inherit cargo python3native python3-dir pkgconfig
 
 # Dependencias para compilar la extensión nativa (necesita udev para serialport)
 DEPENDS += "python3 python3-setuptools-native udev"
-RDEPENDS:${PN} += "python3-core python3-pyserial udev"
+RDEPENDS:${PN} += "python3-core python3-pyserial python3-pyyaml udev"
 
 # Configuración para usar las fuentes vendoreadas incluidas en el repo
 do_configure:prepend() {
@@ -57,6 +58,9 @@ do_install() {
 
     install -d ${D}${datadir}/olympus/models
     install -m 0644 ${WORKDIR}/yolov8n.onnx ${D}${datadir}/olympus/models/yolov8n.onnx
+
+    install -d ${D}${sysconfdir}/olympus
+    install -m 0644 ${WORKDIR}/configs/olympus_controller.yaml ${D}${sysconfdir}/olympus/olympus_controller.yaml
 }
 
 FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
@@ -66,4 +70,5 @@ FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
                 ${bindir}/test_ultrasonic_rpi.py \
                 ${bindir}/test_opencv_camera.py \
                 ${bindir}/olympus_controller.py \
-                ${datadir}/olympus/models/yolov8n.onnx"
+                ${datadir}/olympus/models/yolov8n.onnx \
+                ${sysconfdir}/olympus/olympus_controller.yaml"

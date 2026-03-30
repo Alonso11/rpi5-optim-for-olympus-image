@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.6
+# Version: v1.7
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -29,24 +29,53 @@ import sys
 import time
 import rover_bridge
 
+# ─── Configuration loader ─────────────────────────────────────────────────────
+
+def _load_config() -> dict:
+    """Carga la configuración desde YAML si está disponible.
+
+    Busca en orden:
+      1. /etc/olympus/olympus_controller.yaml  (producción — instalado por Yocto)
+      2. configs/olympus_controller.yaml       (desarrollo — junto al script)
+
+    Si ningún archivo existe o PyYAML no está instalado, retorna {} y todos
+    los parámetros usan sus valores por defecto definidos en cfg.get().
+    """
+    from pathlib import Path
+    candidates = [
+        Path("/etc/olympus/olympus_controller.yaml"),
+        Path(__file__).parent / "configs" / "olympus_controller.yaml",
+    ]
+    try:
+        import yaml
+        for path in candidates:
+            if path.exists():
+                with open(path) as f:
+                    return yaml.safe_load(f) or {}
+    except ImportError:
+        pass  # PyYAML no disponible — usar defaults del código
+    return {}
+
+_cfg = _load_config()
+
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-PING_INTERVAL_S   = 1.0    # Max seconds between commands before sending PING
-TLM_TIMEOUT_S     = 5.0    # Seconds without TLM → link loss → force STB (COMM-REQ-005)
-CYCLE_WARN_MS     = 1500   # Umbral de advertencia de ciclo lento (RNF-001: ≤ 2000 ms)
-CYCLE_LOG_PERIOD  = 50     # Cada cuántos ciclos loguear tiempo a DEBUG
-RETREAT_DIST_MM   = 300    # Distancia táctica HLC para iniciar RET (> 200 mm del LLC)
-MAX_WAYPOINTS     = 5      # Últimos N waypoints seguros a retener (SyRS-061)
-BATT_WARN_MV      = 14000  # 3.5 V/celda × 4S Li-ion → advertir operador (EPS-REQ-001)
-BATT_CRITICAL_MV  = 12800  # 3.2 V/celda × 4S Li-ion → forzar STB inmediato
-FRAME_WIDTH       = 640
-FRAME_HEIGHT      = 480
-VISION_CONF_MIN   = 0.5    # Minimum detection confidence to act on
-VISION_AREA_MIN   = 0.05   # Min bbox area as fraction of frame to act on
+PING_INTERVAL_S   = float(_cfg.get("ping_interval_s",   1.0))   # Max s entre comandos antes de PING
+TLM_TIMEOUT_S     = float(_cfg.get("tlm_timeout_s",     5.0))   # Sin TLM → link loss → STB (COMM-REQ-005)
+CYCLE_WARN_MS     = int  (_cfg.get("cycle_warn_ms",     1500))  # Umbral de ciclo lento (RNF-001: ≤ 2000 ms)
+CYCLE_LOG_PERIOD  = int  (_cfg.get("cycle_log_period",  50))    # Cada cuántos ciclos loguear tiempo a DEBUG
+RETREAT_DIST_MM   = int  (_cfg.get("retreat_dist_mm",   300))   # Distancia táctica HLC para RET (> 200 mm LLC)
+MAX_WAYPOINTS     = int  (_cfg.get("max_waypoints",     5))     # Últimos N waypoints seguros (SyRS-061)
+BATT_WARN_MV      = int  (_cfg.get("batt_warn_mv",      14000)) # 3.5 V/celda × 4S → advertir (EPS-REQ-001)
+BATT_CRITICAL_MV  = int  (_cfg.get("batt_critical_mv",  12800)) # 3.2 V/celda × 4S → STB inmediato
+FRAME_WIDTH       = int  (_cfg.get("frame_width",       640))
+FRAME_HEIGHT      = int  (_cfg.get("frame_height",      480))
+VISION_CONF_MIN   = float(_cfg.get("vision_conf_min",   0.5))   # Confianza mínima para actuar
+VISION_AREA_MIN   = float(_cfg.get("vision_area_min",   0.05))  # Área mínima bbox como fracción del frame
 
 # Frame zones for avoidance decision (fractions of FRAME_WIDTH)
-ZONE_LEFT_END     = 0.33   # 0–33%  → obstacle left  → AVD:R
-ZONE_RIGHT_START  = 0.67   # 67–100% → obstacle right → AVD:L
+ZONE_LEFT_END     = float(_cfg.get("zone_left_end",     0.33))  # 0–33%  → obstacle left  → AVD:R
+ZONE_RIGHT_START  = float(_cfg.get("zone_right_start",  0.67))  # 67–100% → obstacle right → AVD:L
 # Center zone (33–67%) → RET
 
 # ─── Telemetry Frame ─────────────────────────────────────────────────────────

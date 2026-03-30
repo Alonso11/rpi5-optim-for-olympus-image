@@ -1,0 +1,57 @@
+# Olympus HLC — Configuración del controlador principal
+# Version: v1.0
+#
+# Este archivo se instala en /etc/olympus/olympus_controller.yaml.
+# Modificarlo en la RPi5 y reiniciar el servicio para aplicar cambios
+# sin necesidad de recompilar la imagen Yocto.
+#
+# Si el archivo no existe o una clave está ausente, olympus_controller.py
+# usa los valores por defecto definidos en el código (idénticos a los de abajo).
+
+# ─── Comunicación LLC ────────────────────────────────────────────────────────
+# Máximo intervalo entre comandos antes de enviar PING para mantener vivo
+# el watchdog del Arduino (~2 s sin comando → FAULT automático).
+ping_interval_s: 1.0
+
+# Segundos sin recibir frame TLM antes de declarar pérdida de enlace
+# y forzar STB (COMM-REQ-005).
+tlm_timeout_s: 5.0
+
+# Umbral de advertencia de ciclo lento en ms (RNF-001: ciclo ≤ 2000 ms).
+cycle_warn_ms: 1500
+
+# Cada cuántos ciclos escribir el tiempo de ciclo a DEBUG (reduce ruido en log).
+cycle_log_period: 50
+
+# ─── Navegación ──────────────────────────────────────────────────────────────
+# Distancia táctica HLC en mm para iniciar RET de forma proactiva.
+# Debe ser mayor que los umbrales de emergencia del LLC (HC-SR04: 200 mm,
+# VL53L0X: 150 mm) para que el HLC actúe antes del FAULT hardware.
+retreat_dist_mm: 300
+
+# Número máximo de waypoints seguros a retener en memoria (SyRS-061).
+max_waypoints: 5
+
+# ─── Batería — 4S Li-ion (EPS-REQ-001) ──────────────────────────────────────
+# 3.5 V/celda × 4S = 14.0 V → nivel WARN, notificar al operador.
+batt_warn_mv: 14000
+
+# 3.2 V/celda × 4S = 12.8 V → nivel CRITICAL, forzar STB inmediato.
+batt_critical_mv: 12800
+
+# ─── Visión (modo --mode vision) ─────────────────────────────────────────────
+frame_width: 640
+frame_height: 480
+
+# Confianza mínima de detección YOLOv8n para actuar sobre el resultado.
+vision_conf_min: 0.5
+
+# Área mínima del bounding box como fracción del frame para actuar.
+# Evita reaccionar a objetos muy lejanos o falsos positivos pequeños.
+vision_area_min: 0.05
+
+# Zonas de decisión de evasión (fracciones de frame_width):
+#   0 ─── zone_left_end ─── zone_right_start ─── 1
+#       AVD:R              RET              AVD:L
+zone_left_end: 0.33
+zone_right_start: 0.67
