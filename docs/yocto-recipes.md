@@ -15,7 +15,7 @@ olympus-image (v1.5)
 ├── wifi-power-save            → power save chip WiFi (systemd)
 ├── python3-rover-bridge       → HLC completo (Python + Rust + modelos ONNX)
 │   ├── rover_bridge.so        (extensión PyO3/Rust — protocolo MSM)
-│   ├── olympus_controller.py  (controlador principal v1.9)
+│   ├── olympus_controller.py  (controlador principal v2.0)
 │   ├── olympus_controller.yaml (config operacional → /etc/olympus/)
 │   ├── test_*.py              (scripts de prueba hardware)
 │   ├── yolov8n.onnx           (detección bbox, opset 12, 13 MB — referencia)
@@ -74,10 +74,10 @@ Receta principal del HLC. Instala en el target:
 
 #### Configuración operacional (`/etc/olympus/olympus_controller.yaml`)
 
-`olympus_controller.py` v1.9 carga parámetros desde este fichero YAML al inicio.
+`olympus_controller.py` v2.0 carga parámetros desde este fichero YAML al inicio.
 Permite ajustar las siguientes constantes operacionales sin recompilar la imagen:
 
-- **LLC:** `ping_interval_s`, `tlm_timeout_s`, `cycle_warn_ms`, `cycle_log_period`
+- **LLC:** `ping_interval_s`, `tlm_warn_s`, `tlm_retreat_s`, `tlm_stb_s`, `cycle_warn_ms`, `cycle_log_period`
 - **Navegación:** `retreat_dist_mm`, `max_waypoints`, `slip_stall_frames`
 - **Batería:** `batt_warn_mv`, `batt_critical_mv`
 - **Velocidades:** `exp_speed_l`, `exp_speed_r` — CALIBRAR EN CAMPO

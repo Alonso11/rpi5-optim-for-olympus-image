@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.9
+# Version: v2.0
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -61,7 +61,9 @@ _cfg = _load_config()
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 PING_INTERVAL_S   = float(_cfg.get("ping_interval_s",   1.0))   # Max s entre comandos antes de PING
-TLM_TIMEOUT_S     = float(_cfg.get("tlm_timeout_s",     5.0))   # Sin TLM → link loss → STB (COMM-REQ-005)
+TLM_WARN_S        = float(_cfg.get("tlm_warn_s",        5.0))   # Sin TLM → advertencia de enlace degradado
+TLM_RETREAT_S     = float(_cfg.get("tlm_retreat_s",     10.0))  # Sin TLM → RET al último waypoint seguro (SYS-FUN-021)
+TLM_STB_S         = float(_cfg.get("tlm_stb_s",         30.0))  # Sin TLM tras RET → STB definitivo (COMM-REQ-005)
 CYCLE_WARN_MS     = int  (_cfg.get("cycle_warn_ms",     1500))  # Umbral de ciclo lento (RNF-001: ≤ 2000 ms)
 CYCLE_LOG_PERIOD  = int  (_cfg.get("cycle_log_period",  50))    # Cada cuántos ciclos loguear tiempo a DEBUG
 RETREAT_DIST_MM   = int  (_cfg.get("retreat_dist_mm",   300))   # Distancia táctica HLC para RET (> 200 mm LLC)
@@ -908,7 +910,7 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
 
     last_cmd_time   = time.monotonic()
     last_tlm_time   = time.monotonic()
-    tlm_loss_active = False
+    tlm_loss_level  = 0   # 0=ok  1=warn  2=retreat  3=stb
     msm             = RoverMSM()
     tracker         = WaypointTracker()
     energy          = EnergyMonitor()
@@ -925,9 +927,9 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
             tlm_override = None
             if raw_tlm:
                 last_tlm_time = time.monotonic()
-                if tlm_loss_active:
+                if tlm_loss_level > 0:
                     log.info("COMM", "TLM restablecido — enlace recuperado")
-                    tlm_loss_active = False
+                    tlm_loss_level = 0
                 tlm = TlmFrame.parse(raw_tlm)
                 if tlm:
                     log.log_tlm(tlm)
@@ -959,14 +961,31 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                                  f"slip detectado — stall_mask={tlm.stall_mask:06b} "
                                  f"durante {slip.stall_count} frames TLM — forzando RET (RF-004)")
                         tlm_override = "RET"
-            elif time.monotonic() - last_tlm_time > TLM_TIMEOUT_S:
-                # Pérdida de enlace serie — forzar STB hasta recuperar TLM
-                if not tlm_loss_active:
-                    log.warn("COMM",
-                             f"sin TLM por {TLM_TIMEOUT_S:.0f}+ s — "
-                             f"forzando STB (COMM-REQ-005)")
-                    tlm_loss_active = True
-                tlm_override = "STB"
+            else:
+                # Link loss escalation — three levels (SYS-FUN-021 / COMM-REQ-005)
+                silent_s = time.monotonic() - last_tlm_time
+                if silent_s > TLM_STB_S:
+                    if tlm_loss_level < 3:
+                        log.warn("COMM",
+                                 f"sin TLM por {TLM_STB_S:.0f}+ s — "
+                                 f"forzando STB definitivo (COMM-REQ-005)")
+                        tlm_loss_level = 3
+                    tlm_override = "STB"
+                elif silent_s > TLM_RETREAT_S:
+                    if tlm_loss_level < 2:
+                        wp = tracker.last_safe()
+                        log.warn("COMM",
+                                 f"sin TLM por {TLM_RETREAT_S:.0f}+ s — "
+                                 f"RET al último waypoint seguro "
+                                 f"{wp} (SYS-FUN-021)")
+                        tlm_loss_level = 2
+                    tlm_override = "RET"
+                elif silent_s > TLM_WARN_S:
+                    if tlm_loss_level < 1:
+                        log.warn("COMM",
+                                 f"sin TLM por {TLM_WARN_S:.0f}+ s — "
+                                 f"enlace degradado")
+                        tlm_loss_level = 1
 
             cmd = tlm_override or source.next_command()
 

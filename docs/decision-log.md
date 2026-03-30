@@ -310,6 +310,15 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 
 ---
 
+## Semana 5 — SRS gaps alta prioridad (30 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-30 | Reemplazar `tlm_timeout_s` por tres umbrales escalonados: `tlm_warn_s` (5 s) / `tlm_retreat_s` (10 s) / `tlm_stb_s` (30 s) | El SRS (SYS-FUN-021) exige RET al waypoint seguro a los 10 s de pérdida de enlace. La implementación anterior forzaba STB a los 5 s sin intentar retroceder, incumpliendo el requisito. El tercer nivel (STB a 30 s) actúa si el RET no recuperó el enlace |
+| 2026-03-30 | `tlm_loss_level` int (0–3) en lugar de `tlm_loss_active` bool | El escalado requiere distinguir tres estados de pérdida (ok / warn / retreat / stb). Un bool no puede representar esta progresión sin añadir variables adicionales |
+
+---
+
 ## Semana 5 — Segmentación semántica GNC-REQ-002 (30 mar 2026)
 
 | Fecha | Decisión | Motivo |
@@ -355,4 +364,5 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | ~~`SlipMonitor` RF-004 — detección deslizamiento vía `stall_mask` (v1.8)~~ | ✅ commit `bd46419` | — |
 | Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
-| Implementar `VisionSource` con YOLOv8n-seg + grilla de ocupación (GNC-REQ-002) | En desarrollo — branch `feature/gnc-seg-traversability` | Media |
+| ~~SYS-FUN-021 — link loss escalation warn→RET→STB (v2.0)~~ | ✅ commit pendiente | — |
+| ~~Implementar `VisionSource` con YOLOv8n-seg + grilla de ocupación (GNC-REQ-002)~~ | ✅ commit `8aef39e` | — |

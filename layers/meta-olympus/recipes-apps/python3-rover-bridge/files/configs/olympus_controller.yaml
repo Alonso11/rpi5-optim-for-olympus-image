@@ -13,9 +13,17 @@
 # el watchdog del Arduino (~2 s sin comando → FAULT automático).
 ping_interval_s: 1.0
 
-# Segundos sin recibir frame TLM antes de declarar pérdida de enlace
-# y forzar STB (COMM-REQ-005).
-tlm_timeout_s: 5.0
+# Escalado de pérdida de enlace — tres niveles (SYS-FUN-021 / COMM-REQ-005):
+#
+#   tlm_warn_s    → advertencia de enlace degradado (sin acción de movimiento)
+#   tlm_retreat_s → RET al último waypoint seguro registrado por WaypointTracker
+#   tlm_stb_s     → STB definitivo si el enlace no se recupera tras el RET
+#
+# El SRS (SYS-FUN-021) exige RET a los 10 s de pérdida de enlace.
+# tlm_warn_s < tlm_retreat_s < tlm_stb_s obligatorio.
+tlm_warn_s:    5.0
+tlm_retreat_s: 10.0
+tlm_stb_s:     30.0
 
 # Umbral de advertencia de ciclo lento en ms (RNF-001: ciclo ≤ 2000 ms).
 cycle_warn_ms: 1500
