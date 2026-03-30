@@ -319,6 +319,7 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | 2026-03-30 | Clase `SafeMode` HLC-only — activa en batería crítica o LLC FAULT (SYS-FUN-040/041) | El SRS define Safe Mode como un estado distinto de FAULT: prioriza telemetría y bloquea actuadores de tracción. Implementado en HLC porque el Arduino no tiene concepto de Safe Mode — solo conoce FAULT. Condición C&DH >5s cubierta por el escalado de link loss existente |
 | 2026-03-30 | `just_activated` flag en `SafeMode` para loguear solo en la primera activación | Sin este flag, el mensaje de activación se emitiría en cada ciclo mientras Safe Mode está activo, saturando el log. El patrón es idéntico al usado en EnergyMonitor (log al cambiar de nivel) |
 | 2026-03-30 | Safe Mode se desactiva solo con RST explícito del operador — no automáticamente | Si la batería sube (e.g. por ruido) o el LLC sale de FAULT por sí solo, Safe Mode no debe desactivarse sin confirmación humana. Requiere que el operador inspeccione el rover antes de retomar operación |
+| 2026-03-30 | Secuencia de apagado: STB+ACK → log "READY_FOR_POWEROFF" → flush+fsync → close (SYS-FUN-050/051) | Sin fsync el kernel puede mantener páginas sucias en buffer tras close() — un apagado abrupto truncaría el log. El ACK:STB confirma que el Arduino recibió la orden de parada antes de salir. `READY_FOR_POWEROFF` en stdout permite a un proceso padre (systemd, script) detectar el apagado limpio |
 
 ---
 
@@ -368,5 +369,6 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
 | ~~SYS-FUN-021 — link loss escalation warn→RET→STB (v2.0)~~ | ✅ commit `9d251d2` | — |
-| ~~SYS-FUN-040/041 — clase SafeMode HLC (v2.1)~~ | ✅ commit pendiente | — |
+| ~~SYS-FUN-040/041 — clase SafeMode HLC (v2.1)~~ | ✅ commit `e95f43e` | — |
+| ~~SYS-FUN-050/051 — shutdown seguro: STB+ACK + fsync (v2.2)~~ | ✅ commit pendiente | — |
 | ~~Implementar `VisionSource` con YOLOv8n-seg + grilla de ocupación (GNC-REQ-002)~~ | ✅ commit `8aef39e` | — |

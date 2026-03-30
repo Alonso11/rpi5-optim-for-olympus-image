@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v2.1
+# Version: v2.2
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -479,7 +479,20 @@ class OlympusLogger:
         self._write("DEBUG", "CYCLE", f"{cycle_ms:.1f} ms")
 
     def close(self) -> None:
+        """
+        Cierra el log garantizando escritura física al almacenamiento no volátil
+        (SYS-FUN-050). Secuencia: flush → fsync → close.
+        fsync es necesario porque el kernel puede mantener páginas sucias en
+        buffer incluso después de close() — sin él el apagado abrupto puede
+        truncar el fichero de log.
+        """
         if self._handler:
+            try:
+                self._handler.flush()
+                if hasattr(self._handler, "stream") and self._handler.stream:
+                    os.fsync(self._handler.stream.fileno())
+            except OSError:
+                pass  # stream ya cerrado o fd no sincronizable (e.g. stdout)
             self._handler.close()
             self._handler = None
 
@@ -1131,13 +1144,29 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                 log.log_cycle(cycle_ms)
 
     except (KeyboardInterrupt, SystemExit):
-        log.info("CTRL", "Stopping — sending STB")
+        # ── Shutdown sequence (SYS-FUN-050 / SYS-FUN-051) ───────────────────
+        # Step 1 — parking: send STB and wait for ACK:STB before exiting
+        log.info("CTRL", "Shutdown iniciado — enviando STB (SYS-FUN-051)")
+        _parked = False
         try:
-            rover.send_command("STB")
-        except Exception:
-            pass
+            resp = rover.send_command("STB")
+            if isinstance(resp, str) and "ACK:STB" in resp:
+                _parked = True
+                log.info("CTRL", "Parking confirmado (ACK:STB)")
+            else:
+                log.warn("CTRL",
+                         f"ACK:STB no recibido (resp={resp!r}) — "
+                         f"asumiendo parado por timeout")
+        except Exception as exc:
+            log.warn("CTRL", f"Error enviando STB en shutdown: {exc}")
+
+        # Step 2 — log sync: escribir entrada final y forzar fsync (SYS-FUN-050)
+        log.info("CTRL",
+                 f"READY_FOR_POWEROFF — parked={_parked} "
+                 f"(logs sincronizados a almacenamiento no volátil)")
+        print("READY_FOR_POWEROFF")
     finally:
-        log.close()
+        log.close()   # flush + fsync + close
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────

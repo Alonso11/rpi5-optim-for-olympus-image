@@ -19,7 +19,7 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 │  rover_bridge.so (Rust/PyO3) ──────┼─ USB ──┼─── USART0 (CDC-ACM)             │
 │  /dev/arduino_mega                 │        │    MSM: STB/EXP/AVD/RET/FLT     │
 │                                    │        │                                  │
-│  olympus_controller.py (v2.1)      │        │  6 Motores (PWM L298N)           │
+│  olympus_controller.py (v2.2)      │        │  6 Motores (PWM L298N)           │
 │  OpenCV + cv2.dnn (YOLOv8n/-seg)  │        │  HC-SR04 D38(Trig) D39(Echo)     │
 │  Cámara CSI (libcamera / V4L2)     │        │  VL53L0X (ToF I2C)               │
 │                                    │        │  6 Encoders Hall (INT0–INT5)     │
@@ -32,7 +32,7 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  olympus_controller.py (v2.1)                       │
+│  olympus_controller.py (v2.2)                       │
 │  - _load_config() (YAML /etc/olympus/, fallback)    │
 │  - RoverMSM + RoverState (espejo estado Arduino)    │
 │  - TlmFrame parser (20 campos, ICD LLC)             │
