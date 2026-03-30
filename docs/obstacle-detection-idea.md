@@ -206,34 +206,29 @@ como keepalive implícito).
 
 ## Pasos de implementación (roadmap)
 
-### Paso 1 — Limpiar el build *(pendiente)*
-- [ ] Quitar `onnxruntime` de `IMAGE_INSTALL` en `olympus-image.bb`
-- [ ] Quitar `meta-tensorflow-lite` y `meta-onnxruntime` de `bblayers.conf`
+### Paso 1 — Limpiar el build *(✅ completado)*
+- [x] Quitar `onnxruntime` de `IMAGE_INSTALL` en `olympus-image.bb`
+- [x] Quitar `meta-tensorflow-lite` y `meta-onnxruntime` de `bblayers.conf`
 
-### Paso 2 — Exportar el modelo *(pendiente)*
-- [ ] En máquina de desarrollo (no RPi5):
-  ```bash
-  pip install ultralytics
-  yolo export model=yolov8n.pt format=onnx imgsz=640 opset=12
-  ```
-- [ ] Verificar que `cv2.dnn.readNetFromONNX("yolov8n.onnx")` carga sin error
-- [ ] Medir FPS real en RPi5 antes de integrar al loop
+### Paso 2 — Exportar el modelo *(✅ completado)*
+- [x] Exportado con `yolo export model=yolov8n.pt format=onnx imgsz=640 opset=12`
+- [x] `cv2.dnn.readNetFromONNX` carga correctamente en RPi5
 
-### Paso 3 — Empaquetar el modelo en Yocto *(pendiente)*
-- [ ] Añadir `yolov8n.onnx` a `SRC_URI` de la receta `python3-rover-bridge`
-  (o crear receta `olympus-models`)
-- [ ] Instalar en `/usr/share/olympus/models/yolov8n.onnx`
+### Paso 3 — Empaquetar el modelo en Yocto *(✅ completado)*
+- [x] `yolov8n.onnx` en `SRC_URI` de `python3-rover-bridge` (receta v1.3)
+- [x] Instalado en `/usr/share/olympus/models/yolov8n.onnx`
 
-### Paso 4 — Escribir `olympus_controller.py` *(pendiente)*
-- [ ] Flag `--mode vision|manual` via argparse
-- [ ] Clase `ManualSource`: parsea stdin → comandos MSM
-- [ ] Clase `VisionSource`: cámara + cv2.dnn + decisión por zonas del frame
-- [ ] Loop principal unificado con keepalive PING cada 1 s
-- [ ] Fallback seguro: si cámara falla en modo vision → `STB` + aviso
-- [ ] Instalarlo en `/usr/bin/` via la receta
+### Paso 4 — Escribir `olympus_controller.py` *(✅ completado — v1.7)*
+- [x] Flag `--mode vision|manual` via argparse
+- [x] Clase `ManualSource`: parsea stdin → comandos MSM
+- [x] Clase `VisionSource`: cámara + cv2.dnn + decisión por zonas del frame
+- [x] Loop principal unificado con keepalive PING cada 1 s
+- [x] Fallback seguro: si cámara falla en modo vision → `STB` + aviso
+- [x] Instalado en `/usr/bin/` via la receta
+- [x] Parámetros configurables vía YAML (`/etc/olympus/olympus_controller.yaml`)
 
-### Paso 5 — Calibrar en campo *(pendiente)*
-- [ ] Ajustar umbrales de confianza y área por bbox
+### Paso 5 — Calibrar en campo *(pendiente — requiere hardware)*
+- [ ] Ajustar umbrales de confianza y área por bbox en `/etc/olympus/olympus_controller.yaml`
 - [ ] Ajustar velocidades de EXP/AVD/RET según terreno
 - [ ] Verificar que el HC-SR04 del Arduino sigue siendo la red de seguridad final
 
