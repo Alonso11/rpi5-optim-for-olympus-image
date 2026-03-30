@@ -208,4 +208,4 @@ olympus_controller.py --mode manual \
 | `TimeoutError` esperando respuesta | Firmware LLC no cargado o baud incorrecto | Verificar firmware con `test_rover.py` |
 | `sin TLM por 5+ s` en el log | Firmware no emite TLM o enlace roto | Verificar firmware LLC versión >= v2.4 |
 | Cámara no detectada | dtoverlay incorrecto o conector CAM1 | Verificar `rpicam-hello --list-cameras`; usar CAM0 (conector derecho) |
-| Ciclo lento > 1500 ms | Inferencia YOLOv8n lenta en CPU | Normal en RPi5 sin NPU; ajustar `VISION_CONF_MIN` |
+| Ciclo lento > 1500 ms | Inferencia YOLOv8n lenta en CPU | Normal en RPi5 sin NPU; subir `vision_conf_min` en `/etc/olympus/olympus_controller.yaml` |

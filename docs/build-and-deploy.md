@@ -23,8 +23,6 @@ El script clona automáticamente todas las capas externas necesarias:
 - poky (scarthgap)
 - meta-raspberrypi
 - meta-openembedded
-- meta-tensorflow-lite
-- meta-onnxruntime
 
 ---
 
@@ -134,7 +132,7 @@ El script:
 
 | Branch | Descripción |
 |--------|-------------|
-| `main` | Base estable — comunicación UART probada en hardware |
-| `layer-rover-control` | Issues corregidos sobre main |
-| `sensor-integration` | Integración sensor HC-SR04 |
-| `csi-camera` | Soporte cámara CSI + OpenCV |
+| `main` | Base estable inicial — comunicación UART básica |
+| `layer-rover-control` | Branch activo — HLC completo (MSM, visión, YAML config) |
+| `sensor-integration` | Legacy — HC-SR04 en GPIO RPi5 (superado por `layer-rover-control`) |
+| `csi-camera` | Legacy — soporte cámara CSI inicial (superado por `layer-rover-control`) |
