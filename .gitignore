@@ -74,3 +74,8 @@ layers/poky/
 
 # Rust build artifacts
 **/target/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
