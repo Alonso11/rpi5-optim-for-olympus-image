@@ -292,7 +292,24 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 
 ---
 
-## Pendiente (al 29 mar 2026)
+## Semana 4 — Configuración YAML (29–30 mar 2026)
+
+### olympus_controller.py v1.6 → v1.7 + receta v1.2 → v1.3
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-29 | Implementar `_load_config()` en `olympus_controller.py` — carga YAML con fallback a constantes | Las 14 constantes del HLC estaban hardcodeadas. YAML en `/etc/olympus/` permite cambiar parámetros operacionales (distancias, voltajes, visión) sin recompilar la imagen Yocto |
+| 2026-03-29 | Buscar config en dos rutas: `/etc/olympus/olympus_controller.yaml` (producción) → `./configs/` (desarrollo) | `/etc/` es la ruta estándar en un sistema Linux embebido; `./configs/` permite ejecutar el script durante desarrollo sin tener acceso a `/etc/` |
+| 2026-03-29 | Fallback silencioso a constantes por defecto si PyYAML no está instalado o el fichero no existe | El rover no debe fallar al arrancar por falta de un fichero de config; los valores por defecto son idénticos a los que había hardcodeados — sin regresión funcional |
+| 2026-03-29 | Usar `yaml.safe_load()` en lugar de `yaml.load()` | `yaml.load()` puede ejecutar código arbitrario mediante constructores YAML; `safe_load()` solo carga tipos primitivos — práctica estándar de seguridad |
+| 2026-03-29 | Añadir `python3-pyyaml` a `RDEPENDS` en la receta Yocto | PyYAML no está incluido por defecto en `python3-core`; sin declararlo explícitamente, `import yaml` falla en el target |
+| 2026-03-29 | Instalar `configs/olympus_controller.yaml` en `${sysconfdir}/olympus/` (`/etc/olympus/`) | `${sysconfdir}` es la variable Yocto para `/etc/`; es el lugar canónico para config de sistema en FHS — permite editar sin tocar `/usr/bin/` |
+| 2026-03-29 | Añadir `**/__pycache__/` y `*.pyc` a `.gitignore` | El archivo `olympus_controller.cpython-312.pyc` fue rastreado por git accidentalmente al desarrollar en el host; los archivos `.pyc` son artefactos compilados — no pertenecen al repositorio |
+| 2026-03-30 | Rebuild imagen Yocto v1.5 en GCP VM con YAML config | Primera imagen que incluye `olympus_controller.yaml` en rootfs. Verificado: `/etc/olympus/olympus_controller.yaml`, `/usr/bin/olympus_controller.py`, `python3-pyyaml` en `site-packages` — todos presentes |
+
+---
+
+## Pendiente (al 30 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
 |---|---|---|
@@ -316,6 +333,6 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | ~~Auditoría HLC + fixes (v1.2–v1.6)~~ | ✅ commits `f596bcf`–`229121e` | — |
 | ~~Eliminar recetas obsoletas Yocto~~ | ✅ commits `4c893f4`, `73b925e` | — |
 | ~~Limpiar IMAGE_INSTALL (pillow, pip)~~ | ✅ commit `b1933ed` | — |
-| Rebuild Yocto con todos los fixes (dtoverlay, imagen v1.4) | Requiere build en GCP VM | Media |
+| ~~Configuración YAML (`olympus_controller.py` v1.7, receta v1.3)~~ | ✅ imagen v1.5 buildeada y verificada 2026-03-30 | — |
 | Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |

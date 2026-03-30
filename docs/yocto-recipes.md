@@ -8,14 +8,15 @@ que componen la imagen `olympus-image`.
 ## Árbol de dependencias (simplificado)
 
 ```
-olympus-image (v1.4)
+olympus-image (v1.5)
 ├── custom-udev-rules          → /etc/udev/rules.d/99-arduino.rules
 ├── resize-rootfs              → servicio systemd primer arranque
 ├── wifi-config                → wpa_supplicant + credenciales WiFi
 ├── wifi-power-save            → power save chip WiFi (systemd)
 ├── python3-rover-bridge       → HLC completo (Python + Rust + modelo ONNX)
 │   ├── rover_bridge.so        (extensión PyO3/Rust — protocolo MSM)
-│   ├── olympus_controller.py  (controlador principal v1.6)
+│   ├── olympus_controller.py  (controlador principal v1.7)
+│   ├── olympus_controller.yaml (config operacional → /etc/olympus/)
 │   ├── test_*.py              (scripts de prueba hardware)
 │   └── yolov8n.onnx           (modelo YOLOv8n opset 12, 13 MB)
 ├── libpisp                    (ISP pisp RPi5 — requerido por libcamera)
@@ -50,7 +51,7 @@ con `IMAGE_INSTALL:append`.
 
 ### Apps (recipes-apps)
 
-#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.2
+#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.3
 
 Receta principal del HLC. Instala en el target:
 
@@ -64,9 +65,31 @@ Receta principal del HLC. Instala en el target:
 | `test_opencv_camera.py` | `/usr/bin/` |
 | `test_rover.py` | `/usr/bin/` |
 | `yolov8n.onnx` | `/usr/share/olympus/models/` |
+| `olympus_controller.yaml` | `/etc/olympus/` |
 
 **Dependencias build:** `python3`, `python3-setuptools-native`, `udev`
-**Dependencias runtime:** `python3-core`, `python3-pyserial`, `udev`
+**Dependencias runtime:** `python3-core`, `python3-pyserial`, `python3-pyyaml`, `udev`
+
+#### Configuración operacional (`/etc/olympus/olympus_controller.yaml`)
+
+`olympus_controller.py` v1.7 carga parámetros desde este fichero YAML al inicio.
+Permite ajustar 14 constantes operacionales sin recompilar la imagen:
+
+- **LLC:** `ping_interval_s`, `tlm_timeout_s`, `cycle_warn_ms`, `cycle_log_period`
+- **Navegación:** `retreat_dist_mm`, `max_waypoints`
+- **Batería:** `batt_warn_mv`, `batt_critical_mv`
+- **Visión:** `frame_width`, `frame_height`, `vision_conf_min`, `vision_area_min`, `zone_left_end`, `zone_right_start`
+
+Si el fichero no existe o PyYAML no está instalado, el controlador usa los valores
+por defecto hardcodeados (idénticos a los del YAML) — sin regresión funcional.
+
+Para modificar un parámetro en la RPi5 sin reflashear:
+```bash
+# Editar el fichero de config
+nano /etc/olympus/olympus_controller.yaml
+# Reiniciar el servicio (o volver a lanzar el script)
+systemctl restart olympus-controller  # si está como servicio systemd
+```
 
 El binario `rover_bridge.so` se compila desde el crate Rust con PyO3 durante
 `do_compile`. Expone a Python las funciones de comunicación UART con el MSM del
@@ -233,6 +256,7 @@ SRCREV  = "593f63bf981de1a572bbb46e79e7d8b169e96fae"
 | `linux-firmware-rpidistro-bcm43455` | meta-raspberrypi | Firmware chip WiFi RPi5 (CYW43455) |
 | `python3-core` | meta-openembedded | Intérprete Python 3.12 |
 | `python3-pyserial` | meta-openembedded | UART desde Python (usado por test_rover.py) |
+| `python3-pyyaml` | meta-openembedded | Carga `olympus_controller.yaml` al arrancar |
 | `python3-numpy` | meta-openembedded | Procesamiento numérico (OpenCV) |
 | `python3-opencv` | meta-openembedded | Visión + cv2.dnn (inferencia ONNX) |
 | `libpisp` | meta-olympus | ISP RPi5 (pipeline pisp) |
