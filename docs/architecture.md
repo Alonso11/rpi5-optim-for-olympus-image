@@ -19,7 +19,7 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 │  rover_bridge.so (Rust/PyO3) ──────┼─ USB ──┼─── USART0 (CDC-ACM)             │
 │  /dev/arduino_mega                 │        │    MSM: STB/EXP/AVD/RET/FLT     │
 │                                    │        │                                  │
-│  olympus_controller.py (v1.6)      │        │  6 Motores (PWM L298N)           │
+│  olympus_controller.py (v1.7)      │        │  6 Motores (PWM L298N)           │
 │  OpenCV + cv2.dnn (YOLOv8n ONNX)  │        │  HC-SR04 D38(Trig) D39(Echo)     │
 │  Cámara CSI (libcamera / V4L2)     │        │  VL53L0X (ToF I2C)               │
 │                                    │        │  6 Encoders Hall (INT0–INT5)     │
@@ -32,7 +32,8 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  olympus_controller.py (v1.6)                       │
+│  olympus_controller.py (v1.7)                       │
+│  - _load_config() (YAML /etc/olympus/, fallback)    │
 │  - RoverMSM + RoverState (espejo estado Arduino)    │
 │  - TlmFrame parser (20 campos, ICD LLC)             │
 │  - WaypointTracker (5 puntos seguros, SyRS-061)     │
@@ -79,7 +80,7 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 
 | Receta | Descripción | En imagen |
 |--------|-------------|-----------|
-| `python3-rover-bridge` | Módulo Rust/PyO3 + controlador + modelo ONNX | ✅ |
+| `python3-rover-bridge` | Módulo Rust/PyO3 + controlador + modelo ONNX + config YAML | ✅ |
 | `wifi-config` | wpa_supplicant configurado | ✅ |
 | `wifi-power-save` | Ahorro energía WiFi (systemd) | ✅ |
 | `custom-udev-rules` | Symlink /dev/arduino_mega | ✅ |
@@ -109,7 +110,7 @@ El Arduino emite telemetría extendida (TLM) de forma asíncrona cada ~1 s.
 | `AVD:L` | Girar izquierda (evasión) |
 | `AVD:R` | Girar derecha (evasión) |
 | `RET` | Retroceder |
-| `FLT` | Forzar FAULT desde HLC |
+| `FLT` | Forzar FAULT desde HLC *(solo disponible como entrada directa en modo manual — no tiene atajo)* |
 | `RST` | Reset → Standby |
 
 ### Respuestas Arduino → RPi5
@@ -184,7 +185,7 @@ Valor reportado en campo `DIST` del frame TLM.
 
 - IMX219 genérica en **CAM0** (conector derecho de la RPi5)
 - `dtoverlay=imx219,cam0` aplicado automáticamente por `rpi-config_%.bbappend`
-- Captura con `rpicam-still` → inferencia con `cv2.dnn.readNetFromONNX` (YOLOv8n)
+- Captura con `rpicam-still --output -` (un frame por llamada vía subprocess) → inferencia con `cv2.dnn.readNetFromONNX` (YOLOv8n)
 - ~1–2 FPS a 640×480 (CPU)
 
 ### HC-SR04 secundario — GPIO RPi5 (futuro)
