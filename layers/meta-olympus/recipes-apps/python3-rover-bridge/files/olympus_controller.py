@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v1.7
+# Version: v1.8
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -77,6 +77,8 @@ VISION_AREA_MIN   = float(_cfg.get("vision_area_min",   0.05))  # Área mínima 
 ZONE_LEFT_END     = float(_cfg.get("zone_left_end",     0.33))  # 0–33%  → obstacle left  → AVD:R
 ZONE_RIGHT_START  = float(_cfg.get("zone_right_start",  0.67))  # 67–100% → obstacle right → AVD:L
 # Center zone (33–67%) → RET
+
+SLIP_STALL_FRAMES = int  (_cfg.get("slip_stall_frames",  2))    # Frames TLM consecutivos con stall → RET (RF-004)
 
 # ─── Telemetry Frame ─────────────────────────────────────────────────────────
 
@@ -250,6 +252,51 @@ class EnergyMonitor:
 
         self._level = new_level
         return self._level
+
+
+# ─── Slip Monitor ────────────────────────────────────────────────────────────
+
+class SlipMonitor:
+    """
+    Detecta slip de ruedas procesando el campo stall_mask del frame TLM (RF-004).
+
+    El LLC pone stall_mask[i]=1 cuando el motor i está en velocidad > STALL_SPEED_MIN
+    pero su encoder no registra movimiento durante > STALL_THRESHOLD ciclos (~1 s).
+    Eso indica que la rueda gira sin tracción (slip) o hay bloqueo mecánico.
+
+    Estrategia HLC:
+      - Solo actúa en estado EXPLORE (en AVD/RET el stall puede ser esperado).
+      - Acumula frames TLM consecutivos con stall_mask != 0.
+      - Cuando el contador alcanza slip_stall_frames → override RET.
+      - Se reinicia cuando stall_mask == 0 o el rover sale de EXPLORE.
+
+    Prioridad en el loop: CRITICAL > retreat (dist) > slip > comando fuente.
+    """
+
+    def __init__(self, stall_frames: int = SLIP_STALL_FRAMES):
+        self._threshold: int = stall_frames
+        self._count:     int = 0
+
+    def update(self, tlm, msm_state) -> bool:
+        """
+        Actualiza el contador con el último frame TLM.
+        Retorna True si se debe emitir RET por slip persistente.
+
+        msm_state debe ser RoverState — solo actúa en EXPLORE.
+        """
+        if msm_state != RoverState.EXPLORE or tlm.stall_mask == 0:
+            self._count = 0
+            return False
+
+        self._count += 1
+        return self._count >= self._threshold
+
+    def reset(self) -> None:
+        self._count = 0
+
+    @property
+    def stall_count(self) -> int:
+        return self._count
 
 
 # ─── Logger ──────────────────────────────────────────────────────────────────
@@ -698,6 +745,7 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     msm             = RoverMSM()
     tracker         = WaypointTracker()
     energy          = EnergyMonitor()
+    slip            = SlipMonitor()
     prev_energy     = EnergyLevel.OK
     cycle_count     = 0
 
@@ -724,10 +772,11 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                         log.log_energy(e_level, tlm.batt_mv)
                         prev_energy = e_level
 
-                    # Prioridad de override: CRITICAL > should_retreat
+                    # Prioridad de override: CRITICAL > should_retreat > slip
                     if e_level == EnergyLevel.CRITICAL:
                         log.warn("EPS", "batería crítica — forzando STB")
                         tlm_override = "STB"
+                        slip.reset()
                     elif tracker.should_retreat(tlm):
                         wp = tracker.last_safe()
                         wp_info = (f"last_safe tick={wp.tick_ms}ms dist={wp.dist_mm}mm"
@@ -736,6 +785,12 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                                  f"obstáculo táctico a {tlm.dist_mm} mm "
                                  f"(< {RETREAT_DIST_MM} mm) — forzando RET "
                                  f"[{wp_info}]")
+                        tlm_override = "RET"
+                        slip.reset()
+                    elif slip.update(tlm, msm.state):
+                        log.warn("NAV",
+                                 f"slip detectado — stall_mask={tlm.stall_mask:06b} "
+                                 f"durante {slip.stall_count} frames TLM — forzando RET (RF-004)")
                         tlm_override = "RET"
             elif time.monotonic() - last_tlm_time > TLM_TIMEOUT_S:
                 # Pérdida de enlace serie — forzar STB hasta recuperar TLM

@@ -32,6 +32,11 @@ retreat_dist_mm: 300
 # Número máximo de waypoints seguros a retener en memoria (SyRS-061).
 max_waypoints: 5
 
+# Número de frames TLM consecutivos con stall_mask != 0 en estado EXPLORE
+# antes de forzar RET por detección de deslizamiento (RF-004).
+# 2 frames × ~1 s/frame = reacción en ~2 s.
+slip_stall_frames: 2
+
 # ─── Batería — 4S Li-ion (EPS-REQ-001) ──────────────────────────────────────
 # 3.5 V/celda × 4S = 14.0 V → nivel WARN, notificar al operador.
 batt_warn_mv: 14000
