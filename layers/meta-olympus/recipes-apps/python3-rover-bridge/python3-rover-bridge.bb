@@ -1,4 +1,4 @@
-# Version: v1.3
+# Version: v1.4
 SUMMARY = "Extensión nativa de Python en Rust para control de Rover (Olympus Bridge)"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
@@ -11,6 +11,7 @@ SRC_URI = "file://rover-bridge/ \
            file://test_opencv_camera.py \
            file://olympus_controller.py \
            file://yolov8n.onnx \
+           file://yolov8n-seg.onnx \
            file://configs/olympus_controller.yaml"
 
 # El código está en la subcarpeta rover-bridge
@@ -58,6 +59,7 @@ do_install() {
 
     install -d ${D}${datadir}/olympus/models
     install -m 0644 ${WORKDIR}/yolov8n.onnx ${D}${datadir}/olympus/models/yolov8n.onnx
+    install -m 0644 ${WORKDIR}/yolov8n-seg.onnx ${D}${datadir}/olympus/models/yolov8n-seg.onnx
 
     install -d ${D}${sysconfdir}/olympus
     install -m 0644 ${WORKDIR}/configs/olympus_controller.yaml ${D}${sysconfdir}/olympus/olympus_controller.yaml
@@ -71,4 +73,5 @@ FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
                 ${bindir}/test_opencv_camera.py \
                 ${bindir}/olympus_controller.py \
                 ${datadir}/olympus/models/yolov8n.onnx \
+                ${datadir}/olympus/models/yolov8n-seg.onnx \
                 ${sysconfdir}/olympus/olympus_controller.yaml"
