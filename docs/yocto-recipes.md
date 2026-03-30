@@ -13,12 +13,13 @@ olympus-image (v1.5)
 ├── resize-rootfs              → servicio systemd primer arranque
 ├── wifi-config                → wpa_supplicant + credenciales WiFi
 ├── wifi-power-save            → power save chip WiFi (systemd)
-├── python3-rover-bridge       → HLC completo (Python + Rust + modelo ONNX)
+├── python3-rover-bridge       → HLC completo (Python + Rust + modelos ONNX)
 │   ├── rover_bridge.so        (extensión PyO3/Rust — protocolo MSM)
-│   ├── olympus_controller.py  (controlador principal v1.7)
+│   ├── olympus_controller.py  (controlador principal v1.9)
 │   ├── olympus_controller.yaml (config operacional → /etc/olympus/)
 │   ├── test_*.py              (scripts de prueba hardware)
-│   └── yolov8n.onnx           (modelo YOLOv8n opset 12, 13 MB)
+│   ├── yolov8n.onnx           (detección bbox, opset 12, 13 MB — referencia)
+│   └── yolov8n-seg.onnx       (segmentación semántica, opset 12, 14 MB — GNC-REQ-002)
 ├── libpisp                    (ISP pisp RPi5 — requerido por libcamera)
 ├── libcamera                  (fork RPi Foundation, pipeline rpi/pisp)
 ├── libcamera-apps             (rpicam-apps HEAD, meson feature types)
@@ -38,7 +39,7 @@ olympus-image (v1.5)
 
 ### Imagen
 
-#### `recipes-core/images/olympus-image.bb` — v1.4
+#### `recipes-core/images/olympus-image.bb` — v1.5
 
 Imagen raíz del rover. Hereda `core-image` y añade todos los paquetes necesarios
 con `IMAGE_INSTALL:append`.
@@ -51,7 +52,7 @@ con `IMAGE_INSTALL:append`.
 
 ### Apps (recipes-apps)
 
-#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.3
+#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.4
 
 Receta principal del HLC. Instala en el target:
 
@@ -65,6 +66,7 @@ Receta principal del HLC. Instala en el target:
 | `test_opencv_camera.py` | `/usr/bin/` |
 | `test_rover.py` | `/usr/bin/` |
 | `yolov8n.onnx` | `/usr/share/olympus/models/` |
+| `yolov8n-seg.onnx` | `/usr/share/olympus/models/` |
 | `olympus_controller.yaml` | `/etc/olympus/` |
 
 **Dependencias build:** `python3`, `python3-setuptools-native`, `udev`
@@ -72,13 +74,15 @@ Receta principal del HLC. Instala en el target:
 
 #### Configuración operacional (`/etc/olympus/olympus_controller.yaml`)
 
-`olympus_controller.py` v1.7 carga parámetros desde este fichero YAML al inicio.
-Permite ajustar 14 constantes operacionales sin recompilar la imagen:
+`olympus_controller.py` v1.9 carga parámetros desde este fichero YAML al inicio.
+Permite ajustar las siguientes constantes operacionales sin recompilar la imagen:
 
 - **LLC:** `ping_interval_s`, `tlm_timeout_s`, `cycle_warn_ms`, `cycle_log_period`
-- **Navegación:** `retreat_dist_mm`, `max_waypoints`
+- **Navegación:** `retreat_dist_mm`, `max_waypoints`, `slip_stall_frames`
 - **Batería:** `batt_warn_mv`, `batt_critical_mv`
-- **Visión:** `frame_width`, `frame_height`, `vision_conf_min`, `vision_area_min`, `zone_left_end`, `zone_right_start`
+- **Velocidades:** `exp_speed_l`, `exp_speed_r` — CALIBRAR EN CAMPO
+- **Visión (bbox):** `frame_width`, `frame_height`, `vision_conf_min`, `vision_area_min`, `zone_left_end`, `zone_right_start`
+- **Visión (segmentación):** `vision_mode`, `seg_model_path`, `seg_conf_min`, `seg_area_min`, `seg_zone_min`, `seg_roi_top` — CALIBRAR EN CAMPO
 
 Si el fichero no existe o PyYAML no está instalado, el controlador usa los valores
 por defecto hardcodeados (idénticos a los del YAML) — sin regresión funcional.

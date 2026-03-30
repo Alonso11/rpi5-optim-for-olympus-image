@@ -19,8 +19,8 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 │  rover_bridge.so (Rust/PyO3) ──────┼─ USB ──┼─── USART0 (CDC-ACM)             │
 │  /dev/arduino_mega                 │        │    MSM: STB/EXP/AVD/RET/FLT     │
 │                                    │        │                                  │
-│  olympus_controller.py (v1.8)      │        │  6 Motores (PWM L298N)           │
-│  OpenCV + cv2.dnn (YOLOv8n ONNX)  │        │  HC-SR04 D38(Trig) D39(Echo)     │
+│  olympus_controller.py (v1.9)      │        │  6 Motores (PWM L298N)           │
+│  OpenCV + cv2.dnn (YOLOv8n/-seg)  │        │  HC-SR04 D38(Trig) D39(Echo)     │
 │  Cámara CSI (libcamera / V4L2)     │        │  VL53L0X (ToF I2C)               │
 │                                    │        │  6 Encoders Hall (INT0–INT5)     │
 └────────────────────────────────────┘        └──────────────────────────────────┘
@@ -32,7 +32,7 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  olympus_controller.py (v1.8)                       │
+│  olympus_controller.py (v1.9)                       │
 │  - _load_config() (YAML /etc/olympus/, fallback)    │
 │  - RoverMSM + RoverState (espejo estado Arduino)    │
 │  - TlmFrame parser (20 campos, ICD LLC)             │
@@ -40,7 +40,7 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 │  - EnergyMonitor (4S Li-ion, EPS-REQ-001)           │
 │  - SlipMonitor (stall_mask TLM, RF-004)             │
 │  - OlympusLogger (ISO-8601, RotatingFileHandler)    │
-│  - VisionSource (YOLOv8n ONNX via cv2.dnn)          │
+│  - VisionSource (bbox: YOLOv8n / seg: YOLOv8n-seg)  │
 │  - ManualSource (stdin shortcuts)                   │
 ├─────────────────────────────────────────────────────┤
 │  rover_bridge.so  (Rust/PyO3 — v1.5)               │
@@ -186,7 +186,10 @@ Valor reportado en campo `DIST` del frame TLM.
 
 - IMX219 genérica en **CAM0** (conector derecho de la RPi5)
 - `dtoverlay=imx219,cam0` aplicado automáticamente por `rpi-config_%.bbappend`
-- Captura con `rpicam-still --output -` (un frame por llamada vía subprocess) → inferencia con `cv2.dnn.readNetFromONNX` (YOLOv8n)
+- Captura con `rpicam-still --output -` (un frame por llamada vía subprocess) → inferencia con `cv2.dnn.readNetFromONNX`
+- Modo `bbox` (referencia): YOLOv8n ONNX — decisión por centro de bounding box
+- Modo `segmentation` (GNC-REQ-002): YOLOv8n-seg ONNX — decisión por cobertura de máscara por zona
+- Seleccionable via `vision_mode` en `/etc/olympus/olympus_controller.yaml`
 - ~1–2 FPS a 640×480 (CPU)
 
 ### HC-SR04 secundario — GPIO RPi5 (futuro)
