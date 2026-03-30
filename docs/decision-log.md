@@ -306,6 +306,7 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | 2026-03-29 | Instalar `configs/olympus_controller.yaml` en `${sysconfdir}/olympus/` (`/etc/olympus/`) | `${sysconfdir}` es la variable Yocto para `/etc/`; es el lugar canónico para config de sistema en FHS — permite editar sin tocar `/usr/bin/` |
 | 2026-03-29 | Añadir `**/__pycache__/` y `*.pyc` a `.gitignore` | El archivo `olympus_controller.cpython-312.pyc` fue rastreado por git accidentalmente al desarrollar en el host; los archivos `.pyc` son artefactos compilados — no pertenecen al repositorio |
 | 2026-03-30 | Rebuild imagen Yocto v1.5 en GCP VM con YAML config | Primera imagen que incluye `olympus_controller.yaml` en rootfs. Verificado: `/etc/olympus/olympus_controller.yaml`, `/usr/bin/olympus_controller.py`, `python3-pyyaml` en `site-packages` — todos presentes |
+| 2026-03-30 | Implementar `SlipMonitor` — detección de deslizamiento por `stall_mask` TLM (RF-004) | `stall_mask` ya estaba disponible en `TlmFrame` pero no procesado por el HLC. `SlipMonitor` cuenta frames TLM consecutivos con stall en estado EXPLORE y fuerza RET tras `slip_stall_frames` (default 2). Prioridad override: CRITICAL > retreat > slip |
 
 ---
 
@@ -334,5 +335,6 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | ~~Eliminar recetas obsoletas Yocto~~ | ✅ commits `4c893f4`, `73b925e` | — |
 | ~~Limpiar IMAGE_INSTALL (pillow, pip)~~ | ✅ commit `b1933ed` | — |
 | ~~Configuración YAML (`olympus_controller.py` v1.7, receta v1.3)~~ | ✅ imagen v1.5 buildeada y verificada 2026-03-30 | — |
+| ~~`SlipMonitor` RF-004 — detección deslizamiento vía `stall_mask` (v1.8)~~ | ✅ commit `bd46419` | — |
 | Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
