@@ -58,5 +58,48 @@ vision_area_min: 0.05
 # Zonas de decisión de evasión (fracciones de frame_width):
 #   0 ─── zone_left_end ─── zone_right_start ─── 1
 #       AVD:R              RET              AVD:L
+#
+# La cámara está centrada en el chasis y el rover usa tracción diferencial
+# (giro en sitio), por lo que las zonas son simétricas al 33/67 %.
+# Si la cámara se desplaza lateralmente, ajustar ambos valores en campo.
 zone_left_end: 0.33
 zone_right_start: 0.67
+
+# ─── Segmentación semántica — GNC-REQ-002 (modo vision_mode: segmentation) ───
+#
+# Modo de decisión visual:
+#   "bbox"         — bounding box center (YOLOv8n). Referencia estable.
+#   "segmentation" — máscara de píxeles (YOLOv8n-seg). Más preciso (GNC-REQ-002).
+# Mantener "bbox" hasta verificar yolov8n-seg.onnx en hardware.
+vision_mode: bbox
+
+# Ruta al modelo YOLOv8n-seg exportado a ONNX (opset 12).
+# Exportar con: yolo export model=yolov8n-seg.pt format=onnx imgsz=640 opset=12
+seg_model_path: /usr/share/olympus/models/yolov8n-seg.onnx
+
+# Confianza mínima de detección para el pipeline de segmentación.
+# Valor inicial idéntico a vision_conf_min — ajustar en campo si hay
+# demasiados falsos positivos o el modelo pierde obstáculos reales.
+seg_conf_min: 0.5
+
+# Fracción mínima del frame total que debe cubrir una máscara para que
+# la detección sea considerada. Las máscaras de segmentación son más ajustadas
+# que los bounding boxes (no incluyen espacio vacío interior del bbox), por lo
+# que el umbral es ligeramente menor que vision_area_min (0.05).
+# Ejemplo: 0.03 × 640×480 = ~9 200 px de máscara mínima.
+seg_area_min: 0.03
+
+# Fracción mínima de una zona (izquierda, centro o derecha) que debe estar
+# cubierta por máscaras para activar el comando de evasión correspondiente.
+# Evita reaccionar a ruido de segmentación o sombras pequeñas.
+# Si múltiples zonas superan este umbral, gana la de mayor cobertura (Opción A).
+# Ejemplo: 0.05 × (213 px × 240 px ROI) ≈ 2 556 px mínimos por zona.
+seg_zone_min: 0.05
+
+# Fracción vertical del frame a partir de la cual se evalúan las máscaras
+# (0.0 = frame completo, 0.5 = solo mitad inferior).
+# La mitad superior suele contener fondo lejano, cielo o paredes que no
+# representan obstáculos inmediatos para el rover.
+# Depende del ángulo de montaje de la cámara — CALIBRAR EN CAMPO.
+# Con cámara horizontal: 0.5. Inclinada hacia abajo: bajar hacia 0.3.
+seg_roi_top: 0.5

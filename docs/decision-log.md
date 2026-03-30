@@ -310,6 +310,22 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 
 ---
 
+## Semana 5 — Segmentación semántica GNC-REQ-002 (30 mar 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-03-30 | Branch separada `feature/gnc-seg-traversability` para YOLOv8n-seg | Mantener `layer-rover-control` estable con el approach bbox como referencia; la segmentación requiere validación en hardware antes de ser la rama principal |
+| 2026-03-30 | Modelo YOLOv8n-seg ONNX en lugar de clasificador de terreno custom | No hay dataset de terreno etiquetado disponible. YOLOv8n-seg COCO detecta obstáculos físicos con máscaras de píxeles, suficiente como proxy de transitabilidad para el entorno operacional del rover |
+| 2026-03-30 | Zonas de decisión simétricas 33/67 % mantenidas para segmentación | La cámara está centrada en el chasis y el rover usa tracción diferencial con giro en sitio — no hay asimetría que corregir |
+| 2026-03-30 | Criterio multi-obstáculo: gana la zona con mayor cobertura de píxeles (Opción A) | Equivalente a "el obstáculo más grande/cercano manda". Más predecible que prioridad fija por zona. No requiere hiperparámetros adicionales |
+| 2026-03-30 | Sin peso por posición Y — todos los píxeles en la ROI cuentan igual | A 1–2 FPS la diferencia de distancia entre frames es pequeña. La capa hardware (HC-SR04, VL53L0X) gestiona la emergencia por distancia. El HLC solo necesita dirección, no distancia precisa |
+| 2026-03-30 | `seg_roi_top: 0.5` — solo mitad inferior del frame evaluada, como parámetro de campo | La mitad superior suele contener fondo lejano/cielo. El umbral se deja configurable en YAML porque depende del ángulo de montaje manual de la cámara, que puede variar entre despliegues |
+| 2026-03-30 | `seg_conf_min: 0.5` — igual que `vision_conf_min` como punto de partida | Sin datos de campo no hay base para diferenciarlo. Se ajustará en calibración si hay exceso de falsos positivos |
+| 2026-03-30 | `seg_area_min: 0.03` — 3 % del frame, menor que `vision_area_min` (5 %) | Las máscaras de segmentación son más ajustadas que los bounding boxes (no incluyen espacio vacío), por lo que el mismo obstáculo produce un área de máscara menor. 0.03 × 640×480 ≈ 9 200 px mínimos |
+| 2026-03-30 | `seg_zone_min: 0.05` — 5 % de cobertura de zona para activar comando | Evita reaccionar a ruido de segmentación o sombras pequeñas. Ejemplo: 0.05 × (213 px × 240 px ROI) ≈ 2 556 px mínimos por zona. Valor inicial conservador — bajar si el rover ignora obstáculos reales |
+
+---
+
 ## Pendiente (al 30 mar 2026)
 
 | Tarea | Bloqueante | Prioridad |
@@ -338,3 +354,4 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | ~~`SlipMonitor` RF-004 — detección deslizamiento vía `stall_mask` (v1.8)~~ | ✅ commit `bd46419` | — |
 | Flash firmware LLC al Arduino y probar protocolo MSM end-to-end | Sin hardware conectado | Alta (bloqueante) |
 | Probar `olympus_controller.py --mode vision` con Arduino conectado | Flash LLC pendiente | Alta |
+| Implementar `VisionSource` con YOLOv8n-seg + grilla de ocupación (GNC-REQ-002) | En desarrollo — branch `feature/gnc-seg-traversability` | Media |
