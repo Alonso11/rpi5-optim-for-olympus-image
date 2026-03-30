@@ -65,6 +65,15 @@ vision_area_min: 0.05
 zone_left_end: 0.33
 zone_right_start: 0.67
 
+# Velocidades de exploración (rango -99–99; positivo = avance).
+# Se aplican en ambos modos (bbox y segmentation) cuando no hay obstáculos.
+# Dos valores independientes L/R permiten compensar deriva si un lado del
+# chasis es sistemáticamente más rápido que el otro (variación de motores DC).
+# Si el rover avanza recto con valores iguales, mantener exp_speed_l == exp_speed_r.
+# CALIBRAR EN CAMPO: punto de partida conservador 40 (~40 % del máximo PWM).
+exp_speed_l: 40
+exp_speed_r: 40
+
 # ─── Segmentación semántica — GNC-REQ-002 (modo vision_mode: segmentation) ───
 #
 # Modo de decisión visual:

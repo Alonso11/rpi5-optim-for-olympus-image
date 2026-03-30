@@ -323,6 +323,7 @@ Cada paso fue validado con `py_compile` y tests unitarios inline antes de hacer 
 | 2026-03-30 | `seg_conf_min: 0.5` — igual que `vision_conf_min` como punto de partida | Sin datos de campo no hay base para diferenciarlo. Se ajustará en calibración si hay exceso de falsos positivos |
 | 2026-03-30 | `seg_area_min: 0.03` — 3 % del frame, menor que `vision_area_min` (5 %) | Las máscaras de segmentación son más ajustadas que los bounding boxes (no incluyen espacio vacío), por lo que el mismo obstáculo produce un área de máscara menor. 0.03 × 640×480 ≈ 9 200 px mínimos |
 | 2026-03-30 | `seg_zone_min: 0.05` — 5 % de cobertura de zona para activar comando | Evita reaccionar a ruido de segmentación o sombras pequeñas. Ejemplo: 0.05 × (213 px × 240 px ROI) ≈ 2 556 px mínimos por zona. Valor inicial conservador — bajar si el rover ignora obstáculos reales |
+| 2026-03-30 | `exp_speed_l` / `exp_speed_r` separados en lugar de un único `exp_speed` | Motores DC sin encoders de velocidad presentan variación entre unidades; tener L/R independientes permite compensar deriva sin tocar el firmware. Valor inicial conservador: 40 (~40 % PWM) — subir progresivamente en campo |
 
 ---
 
