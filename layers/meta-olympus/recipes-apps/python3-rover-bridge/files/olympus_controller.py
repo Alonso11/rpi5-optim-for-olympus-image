@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Version: v2.3
+# Version: v2.4
 # Olympus HLC — Main Controller
 #
 # Integrates the CSI camera (or manual operator input) with the Arduino MSM
@@ -7,16 +7,21 @@
 #
 #   --mode vision   Camera + cv2.dnn (YOLOv8n ONNX) → MSM commands
 #   --mode manual   Operator stdin → MSM commands
+#   --mode gcs      UDP commands from Ground Control Station (SRS-013)
 #
-# In both modes the pipeline to the Arduino is identical:
+# In all modes the pipeline to the Arduino is identical:
 #   source.next_command() → rover_bridge.send_command() → log response
 #
 # The Arduino watchdog fires ERR:WDOG → FAULT if no command arrives in ~2s.
 # This loop sends PING every 1s when idle to keep the watchdog alive.
 #
+# GCS mode uses CSP (CubeSat Space Protocol) encapsulation over UDP/IP with
+# CRC-32 integrity verification (SRS-001, RF-006, SyRS-016). See CSPPacket.
+#
 # Usage:
 #   olympus_controller.py --mode manual
 #   olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx
+#   olympus_controller.py --mode gcs
 
 import argparse
 import dataclasses
@@ -26,8 +31,10 @@ import logging
 import logging.handlers
 import os
 import socket
+import struct
 import sys
 import time
+import zlib
 import rover_bridge
 
 # ─── Configuration loader ─────────────────────────────────────────────────────
@@ -98,6 +105,16 @@ GCS_BIND_ADDR        = str  (_cfg.get("gcs_bind_addr",         "0.0.0.0"))
 GCS_LINK_LOST_S      = float(_cfg.get("gcs_link_lost_s",       10.0))  # Sin paquete GCS → link_lost (SYS-FUN-021)
 GCS_RETRY_INTERVAL_S = float(_cfg.get("gcs_retry_interval_s",  5.0))   # Intervalo entre probes HB_REQ
 GCS_MAX_RETRIES      = int  (_cfg.get("gcs_max_retries",        3))     # TBD-OP-02 (política por defecto)
+
+# CSP encapsulation (SRS-001, RF-006, SyRS-016)
+# Direcciones y puertos de servicio CSP v1.x para el enlace Rover–GCS.
+# Rango de direcciones: 0–31 (5 bits). Rango de puertos: 0–63 (6 bits).
+CSP_ADDR_GCS  = int (_cfg.get("csp_addr_gcs",   1))  # Nodo GCS en la red CSP
+CSP_ADDR_HLC  = int (_cfg.get("csp_addr_hlc",   2))  # Nodo HLC (RPi5)
+CSP_PORT_TM   = int (_cfg.get("csp_port_tm",   10))  # Puerto TM downlink (HLC→GCS)
+CSP_PORT_CMD  = int (_cfg.get("csp_port_cmd",  11))  # Puerto CMD uplink  (GCS→HLC)
+CSP_PORT_HB   = int (_cfg.get("csp_port_hb",    1))  # Puerto heartbeat y gestión
+CSP_ENABLED   = bool(_cfg.get("csp_enabled",  True)) # False → modo ASCII legado (solo pruebas)
 
 EXP_SPEED_L       = int  (_cfg.get("exp_speed_l",        40))   # Velocidad izquierda en exploración (-99–99)
 EXP_SPEED_R       = int  (_cfg.get("exp_speed_r",        40))   # Velocidad derecha en exploración (-99–99)
@@ -765,7 +782,7 @@ class ManualSource:
         print("Shortcuts: exp <l> <r> | avl | avr | ret | stb | ping | rst | q (quit)")
         print("Or type MSM commands directly: EXP:80:80 / AVD:L / RET / STB\n")
 
-    def next_command(self):
+    def next_command(self, log=None):
         """
         Blocks until the operator enters a command.
         Returns the MSM command string, or None to skip this cycle.
@@ -896,7 +913,7 @@ class VisionSource:
             self._cv2.IMREAD_COLOR,
         )
 
-    def next_command(self):
+    def next_command(self, log=None):
         """
         Captures a frame, runs inference, and returns an MSM command.
         Returns None on camera read error (caller will send STB).
@@ -1086,26 +1103,138 @@ class VisionSource:
         pass  # No persistent process to clean up with rpicam-still
 
 
+# ─── CSP Encapsulation ───────────────────────────────────────────────────────
+
+class CSPPacket:
+    """
+    Encapsulamiento CSP v1.x (CubeSat Space Protocol) sobre UDP/IP (SRS-001).
+
+    Implementa el subconjunto mínimo de CSP necesario para satisfacer los
+    requisitos de integridad y encapsulamiento del SRS sin depender de libcsp:
+
+      SRS-001  — encapsular/decapsular TM/CMD usando CSP sobre UDP/IP
+      RF-006   — integridad de datos garantizada con CRC-32
+      SyRS-016 — 100% de mensajes TM/CMD con CSP válido
+
+    Razón de no usar libcsp completo (Nivel 2):
+      - libcsp requiere receta Yocto adicional y bindings C/Python (ctypes).
+      - El canal UHF/RDP está marcado como TBD-OP-02 en el SRS; sin hardware
+        UHF disponible, el routing CSP completo no aporta valor verificable.
+      - Esta implementación cubre todos los requisitos de integridad del SRS
+        con stdlib Python (struct + zlib), sin dependencias externas.
+
+    Formato de paquete (total = 4 + len(payload) + 4 bytes):
+      ┌──────────────────────────────────────────────────────────┐
+      │  CSP Header (32 bits, big-endian)                        │
+      │  bits 31-30: priority  (2=NORM)                          │
+      │  bits 29-25: src addr  (5 bits, 0–31)                    │
+      │  bits 24-20: dst addr  (5 bits, 0–31)                    │
+      │  bits 19-14: dst port  (6 bits, 0–63)                    │
+      │  bits 13- 8: src port  (6 bits, 0–63)                    │
+      │  bits  7- 2: reserved                                    │
+      │  bit      1: CRC32 flag (siempre 1 en esta impl.)        │
+      │  bit      0: reserved                                    │
+      ├──────────────────────────────────────────────────────────┤
+      │  Payload (N bytes, ASCII UTF-8)                          │
+      ├──────────────────────────────────────────────────────────┤
+      │  CRC-32 (4 bytes, big-endian, sobre header + payload)    │
+      └──────────────────────────────────────────────────────────┘
+
+    Prioridades CSP:
+      0=CRITICAL  1=HIGH  2=NORM  3=LOW
+    """
+
+    PRIO_NORM   = 2
+    FLAG_CRC32  = 0b10   # bit 1 del campo flags CSP
+
+    # Tamaño mínimo de un paquete válido: 4B header + 0B payload + 4B CRC
+    MIN_SIZE = 8
+
+    @staticmethod
+    def pack(src: int, dst: int, dport: int, sport: int,
+             payload: bytes, prio: int = 2) -> bytes:
+        """
+        Construye un paquete CSP con CRC-32.
+
+        src, dst  : direcciones CSP (0–31)
+        dport     : puerto destino (0–63)
+        sport     : puerto origen  (0–63)
+        payload   : datos en bytes (ASCII TLM o comando MSM)
+        prio      : prioridad CSP (defecto NORM=2)
+
+        Retorna bytes listos para enviar por UDP.
+        """
+        header = (
+            ((prio  & 0x03) << 30) |
+            ((src   & 0x1F) << 25) |
+            ((dst   & 0x1F) << 20) |
+            ((dport & 0x3F) << 14) |
+            ((sport & 0x3F) <<  8) |
+            CSPPacket.FLAG_CRC32
+        )
+        raw = struct.pack(">I", header) + payload
+        crc = struct.pack(">I", zlib.crc32(raw) & 0xFFFFFFFF)
+        return raw + crc
+
+    @staticmethod
+    def unpack(data: bytes) -> "tuple[int | None, bytes | None]":
+        """
+        Valida y decapsula un paquete CSP.
+
+        Retorna (header: int, payload: bytes) si el paquete es válido.
+        Retorna (None, None) si el tamaño es insuficiente o el CRC falla.
+        El CRC-32 se verifica sobre header + payload antes de retornar.
+        """
+        if len(data) < CSPPacket.MIN_SIZE:
+            return None, None
+
+        raw, crc_recv = data[:-4], data[-4:]
+        crc_calc = struct.pack(">I", zlib.crc32(raw) & 0xFFFFFFFF)
+        if crc_calc != crc_recv:
+            return None, None   # RF-006: integridad comprometida
+
+        header  = struct.unpack(">I", raw[:4])[0]
+        payload = raw[4:]
+        return header, payload
+
+    @staticmethod
+    def dst_port(header: int) -> int:
+        """Extrae el puerto destino del header CSP."""
+        return (header >> 14) & 0x3F
+
+    @staticmethod
+    def src_port(header: int) -> int:
+        """Extrae el puerto origen del header CSP."""
+        return (header >> 8) & 0x3F
+
+    @staticmethod
+    def src_addr(header: int) -> int:
+        """Extrae la dirección origen del header CSP."""
+        return (header >> 25) & 0x1F
+
+
 class GCSSource:
     """
     Recibe comandos y heartbeats del GCS vía UDP no-bloqueante (SRS-013).
 
-    Protocolo UDP GCS→HLC (puerto GCS_LISTEN_PORT):
-      CMD:<command>       — comando MSM  (ej. "CMD:EXP:40:40", "CMD:STB")
-      HB                  — heartbeat del GCS (actualiza last_recv_time)
-      HB_ACK:<seq>        — respuesta a probe HB_REQ enviado por el HLC
+    Cuando CSP_ENABLED=True (defecto) todos los paquetes UDP están
+    encapsulados en CSP con CRC-32 (SRS-001, RF-006):
 
-    Protocolo UDP HLC→GCS (puerto GCS_REPLY_PORT en la dirección del GCS):
-      <línea TLM cruda>   — reenvío del frame TLM recibido del Arduino (downlink)
-      HB_REQ:<seq>        — probe de reconexión enviado por CommLinkMonitor
+      GCS→HLC (puerto GCS_LISTEN_PORT):
+        CSP[src=GCS, dst=HLC, dport=CSP_PORT_CMD] + payload "EXP:40:40"
+        CSP[src=GCS, dst=HLC, dport=CSP_PORT_HB]  + payload "HB" | "HB_ACK:<seq>"
 
-    La dirección del GCS se aprende del primer paquete recibido; hasta entonces
-    forward_tlm() y send_probe() son silenciosos (no hay destino conocido).
+      HLC→GCS (puerto GCS_REPLY_PORT):
+        CSP[src=HLC, dst=GCS, dport=CSP_PORT_TM]  + payload <línea TLM cruda>
+        CSP[src=HLC, dst=GCS, dport=CSP_PORT_HB]  + payload "HB_REQ:<seq>"
 
-    next_command() es no-bloqueante: retorna None si no hay comando en la cola.
+    Cuando CSP_ENABLED=False (modo legado para pruebas sin GCS completo):
+      Protocolo ASCII plano — CMD:<cmd>, HB, HB_ACK:<seq>.
+
+    La dirección del GCS se aprende dinámicamente del primer paquete recibido.
+    next_command() es no-bloqueante: retorna None si no hay paquete disponible.
+    Paquetes con CRC-32 inválido son descartados y logueados (RF-006).
     """
-
-    _PROBE_PREFIX = "HB_REQ"
 
     def __init__(self,
                  bind_addr:   str = GCS_BIND_ADDR,
@@ -1116,48 +1245,75 @@ class GCSSource:
         self._sock.bind((bind_addr, listen_port))
         self._sock.setblocking(False)
         self._reply_port  = reply_port
-        self._gcs_addr    = None          # (ip, reply_port) — se aprende dinámicamente
+        self._gcs_addr    = None   # (ip, reply_port) — aprendida dinámicamente
         self._last_recv   = time.monotonic()
         self._probe_seq   = 0
-        print(f"[GCSSource] Escuchando en UDP {bind_addr}:{listen_port} "
-              f"(downlink → :{reply_port})")
+        csp_str = "CSP+CRC32" if CSP_ENABLED else "ASCII (legado)"
+        print(f"[GCSSource] UDP {bind_addr}:{listen_port} → :{reply_port} "
+              f"[{csp_str}]")
 
     @property
     def last_recv_time(self) -> float:
-        """Monotonic timestamp del último paquete recibido del GCS."""
+        """Monotonic timestamp del último paquete válido recibido del GCS."""
         return self._last_recv
 
-    def next_command(self) -> "str | None":
+    def next_command(self, log=None) -> "str | None":
         """
-        Intenta leer un paquete UDP del GCS.
-        Retorna la cadena de comando MSM (ej. "EXP:40:40") o None si no hay nada.
-        Heartbeats (HB, HB_ACK) solo actualizan last_recv_time.
+        Intenta leer un paquete UDP del GCS (no-bloqueante).
+
+        Con CSP_ENABLED: decapsula CSP, verifica CRC-32 (RF-006), despacha
+        por puerto de servicio. Paquetes con CRC inválido se descartan.
+        Con CSP_ENABLED=False: modo ASCII legado para pruebas rápidas.
+
+        Retorna la cadena de comando MSM o None si no hay comando.
+        log: OlympusLogger opcional para registrar errores de integridad.
         """
         try:
-            data, addr = self._sock.recvfrom(256)
+            data, addr = self._sock.recvfrom(512)
         except BlockingIOError:
             return None
         except OSError:
             return None
 
-        self._last_recv = time.monotonic()
-        self._gcs_addr  = (addr[0], self._reply_port)
+        if CSP_ENABLED:
+            header, payload = CSPPacket.unpack(data)
+            if header is None:
+                if log:
+                    log.warn("COMM",
+                             f"CSP CRC-32 inválido — paquete de {addr[0]} descartado "
+                             f"(RF-006 integridad comprometida)")
+                return None   # no actualizar last_recv con paquetes corruptos
 
-        msg = data.decode("utf-8", errors="replace").strip()
-        if msg.startswith("CMD:"):
-            return msg[4:]   # "CMD:EXP:40:40" → "EXP:40:40"
-        # HB / HB_ACK:<seq> — solo actualiza last_recv_time (ya hecho arriba)
-        return None
+            self._last_recv = time.monotonic()
+            self._gcs_addr  = (addr[0], self._reply_port)
+
+            dport = CSPPacket.dst_port(header)
+            if dport == CSP_PORT_CMD:
+                return payload.decode("utf-8", errors="replace").strip()
+            # CSP_PORT_HB u otros — solo actualiza last_recv_time
+            return None
+        else:
+            # Modo ASCII legado
+            self._last_recv = time.monotonic()
+            self._gcs_addr  = (addr[0], self._reply_port)
+            msg = data.decode("utf-8", errors="replace").strip()
+            if msg.startswith("CMD:"):
+                return msg[4:]
+            return None
 
     def send_probe(self) -> None:
         """
-        Envía HB_REQ:<seq> al GCS como probe de reconexión.
-        Silencioso si la dirección del GCS aún no es conocida.
+        Envía probe de reconexión HB_REQ al GCS (CommLinkMonitor, SRS-013).
+        Con CSP: encapsulado en CSP[dport=CSP_PORT_HB] con CRC-32.
         """
         if self._gcs_addr is None:
             return
         self._probe_seq += 1
-        msg = f"{self._PROBE_PREFIX}:{self._probe_seq}\n".encode()
+        payload = f"HB_REQ:{self._probe_seq}".encode()
+        msg = (CSPPacket.pack(CSP_ADDR_HLC, CSP_ADDR_GCS,
+                              CSP_PORT_HB, 0, payload)
+               if CSP_ENABLED
+               else payload + b"\n")
         try:
             self._sock.sendto(msg, self._gcs_addr)
         except OSError:
@@ -1165,13 +1321,18 @@ class GCSSource:
 
     def forward_tlm(self, raw_tlm: str) -> None:
         """
-        Reenvía un frame TLM crudo al GCS vía UDP (downlink SRS-020).
-        Silencioso si la dirección del GCS aún no es conocida.
+        Reenvía frame TLM al GCS vía UDP (downlink SRS-020).
+        Con CSP: encapsulado en CSP[dport=CSP_PORT_TM] con CRC-32 (RF-006).
         """
         if self._gcs_addr is None:
             return
+        payload = raw_tlm.encode()
+        msg = (CSPPacket.pack(CSP_ADDR_HLC, CSP_ADDR_GCS,
+                              CSP_PORT_TM, 0, payload)
+               if CSP_ENABLED
+               else payload + b"\n")
         try:
-            self._sock.sendto((raw_tlm + "\n").encode(), self._gcs_addr)
+            self._sock.sendto(msg, self._gcs_addr)
         except OSError:
             pass
 
@@ -1431,7 +1592,7 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
                                  f"enlace degradado")
                         tlm_loss_level = 1
 
-            cmd = tlm_override or source.next_command()
+            cmd = tlm_override or source.next_command(log)
 
             # Vision mode: camera error → safe stop
             if cmd is None and mode == "vision":

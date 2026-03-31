@@ -139,6 +139,39 @@ gcs_retry_interval_s: 5.0
 # Corresponde a TBD-OP-02 — valor provisional.
 gcs_max_retries: 3
 
+# ─── Encapsulamiento CSP (SRS-001, RF-006, SyRS-016) ─────────────────────────
+#
+# Implementación de nivel 1 de CubeSat Space Protocol sobre UDP/IP:
+#   - Header CSP v1.x de 32 bits (priority, src/dst addr, src/dst port, flags)
+#   - CRC-32 de 4 bytes al final de cada paquete (verificación de integridad)
+#   - Stdlib Python pura (struct + zlib) — sin dependencia de libcsp
+#
+# Razón de no usar libcsp completo:
+#   El canal UHF/RDP (COMM-REQ-003) está marcado como TBD-OP-02 en el SRS y
+#   no tiene hardware disponible. El routing CSP completo no aporta valor
+#   verificable en el alcance actual del TFG. Este nivel 1 cubre SRS-001 y
+#   RF-006 (integridad CRC-32) con complejidad mínima.
+#
+# Direcciones CSP (rango 0–31, 5 bits):
+#   csp_addr_gcs — nodo Ground Control Station
+#   csp_addr_hlc — nodo HLC (RPi5)
+csp_addr_gcs: 1
+csp_addr_hlc: 2
+
+# Puertos de servicio CSP (rango 0–63, 6 bits):
+#   csp_port_tm  — telemetría downlink HLC→GCS
+#   csp_port_cmd — comandos uplink GCS→HLC
+#   csp_port_hb  — heartbeat y gestión (probes HB_REQ / HB_ACK)
+csp_port_tm:  10
+csp_port_cmd: 11
+csp_port_hb:   1
+
+# Activar encapsulamiento CSP en modo --mode gcs.
+# false → protocolo ASCII legado (CMD:<cmd> / HB) — solo para pruebas rápidas
+# sin GCS completo (ej. nc -u o script Python mínimo).
+# DEBE ser true en operación real para cumplir SRS-001 y RF-006.
+csp_enabled: true
+
 # ─── Segmentación semántica — GNC-REQ-002 (modo vision_mode: segmentation) ───
 #
 # Modo de decisión visual:
