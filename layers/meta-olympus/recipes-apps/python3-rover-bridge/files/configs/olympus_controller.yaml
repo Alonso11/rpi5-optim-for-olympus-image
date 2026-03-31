@@ -103,6 +103,42 @@ zone_right_start: 0.67
 exp_speed_l: 40
 exp_speed_r: 40
 
+# ─── Enlace GCS (modo --mode gcs, SRS-013 / SYS-FUN-021) ────────────────────
+#
+# Gestión del enlace UDP entre el GCS (laptop/operador) y el HLC (RPi5).
+# Implementa la máquina de estados GCS descrita en §7.3.8 del SRS:
+#   COMUNICAR      → enlace activo
+#   GESTION_ENLACE → enlace perdido, ejecutando política de reintentos (TBD-OP-02)
+#
+# Puertos UDP:
+#   gcs_listen_port — HLC escucha comandos CMD:<cmd> y heartbeats HB del GCS
+#   gcs_reply_port  — HLC envía TLM downlink y probes HB_REQ al GCS
+#   gcs_bind_addr   — dirección de escucha ("0.0.0.0" = todas las interfaces)
+#
+# La IP del GCS se aprende dinámicamente del primer paquete recibido;
+# no es necesario configurarla aquí.
+gcs_listen_port: 9000
+gcs_reply_port:  9001
+gcs_bind_addr:   "0.0.0.0"
+
+# Tiempo sin paquetes del GCS antes de declarar link_lost (SYS-FUN-021).
+# El SRS exige maniobra de retorno autónomo ante pérdida > 10 s.
+# gcs_link_lost_s debe ser ≤ tlm_retreat_s para que la pérdida de enlace
+# GCS dispare acciones antes (o al mismo tiempo) que la pérdida de TLM LLC.
+gcs_link_lost_s: 10.0
+
+# Intervalo entre probes HB_REQ enviados al GCS durante GESTION_ENLACE.
+# Corresponde a TBD-OP-02 (política de reintentos) — valor provisional
+# pendiente de caracterización de latencia WiFi en campo.
+gcs_retry_interval_s: 5.0
+
+# Número máximo de reintentos antes de forzar STB permanente.
+# Si el GCS no responde tras gcs_max_retries × gcs_retry_interval_s segundos,
+# el HLC asume pérdida total de enlace y detiene el rover indefinidamente
+# hasta que llegue un nuevo paquete GCS.
+# Corresponde a TBD-OP-02 — valor provisional.
+gcs_max_retries: 3
+
 # ─── Segmentación semántica — GNC-REQ-002 (modo vision_mode: segmentation) ───
 #
 # Modo de decisión visual:

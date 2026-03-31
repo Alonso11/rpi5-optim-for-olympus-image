@@ -25,6 +25,7 @@ import enum
 import logging
 import logging.handlers
 import os
+import socket
 import sys
 import time
 import rover_bridge
@@ -89,6 +90,14 @@ STORAGE_MIN_MB       = int  (_cfg.get("storage_min_mb",       50))   # MB libres
 STORAGE_CHECK_CYCLES = int  (_cfg.get("storage_check_cycles", 300))  # Cada cuántos ciclos verificar disco
 
 TLM_INTERVAL_WARN_S  = float(_cfg.get("tlm_interval_warn_s",  2.0))  # Delta entre TLMs > este valor → warn (SyRS-017)
+
+# GCS link management (SRS-013, SYS-FUN-021)
+GCS_LISTEN_PORT      = int  (_cfg.get("gcs_listen_port",       9000))  # Puerto UDP escucha HLC (comandos GCS)
+GCS_REPLY_PORT       = int  (_cfg.get("gcs_reply_port",        9001))  # Puerto UDP destino GCS (TLM downlink)
+GCS_BIND_ADDR        = str  (_cfg.get("gcs_bind_addr",         "0.0.0.0"))
+GCS_LINK_LOST_S      = float(_cfg.get("gcs_link_lost_s",       10.0))  # Sin paquete GCS → link_lost (SYS-FUN-021)
+GCS_RETRY_INTERVAL_S = float(_cfg.get("gcs_retry_interval_s",  5.0))   # Intervalo entre probes HB_REQ
+GCS_MAX_RETRIES      = int  (_cfg.get("gcs_max_retries",        3))     # TBD-OP-02 (política por defecto)
 
 EXP_SPEED_L       = int  (_cfg.get("exp_speed_l",        40))   # Velocidad izquierda en exploración (-99–99)
 EXP_SPEED_R       = int  (_cfg.get("exp_speed_r",        40))   # Velocidad derecha en exploración (-99–99)
@@ -462,6 +471,104 @@ class SafeMode:
         return self._active and cmd not in ("STB", "PING", "RST")
 
 
+# ─── GCS Comm Link Monitor ───────────────────────────────────────────────────
+
+class CommLinkState(enum.Enum):
+    COMUNICAR      = "Comunicar"
+    GESTION_ENLACE = "GestiónEnlace"
+
+
+class CommLinkMonitor:
+    """
+    Gestión de enlace GCS→HLC (SRS-013, SYS-FUN-021).
+
+    Implementa la máquina de estados de comunicaciones (§7.3.8):
+      COMUNICAR      — enlace activo; último paquete GCS ≤ GCS_LINK_LOST_S s.
+      GESTION_ENLACE — enlace perdido; ejecuta política de reintentos (TBD-OP-02).
+
+    Transiciones:
+      COMUNICAR      → link_lost                     → GESTION_ENLACE
+      GESTION_ENLACE → link_restored                 → COMUNICAR
+      GESTION_ENLACE → reconnect_attempt_succeeded   → COMUNICAR
+      GESTION_ENLACE → reconnect_attempt_failed×N    → (max_retries_exceeded → STB)
+
+    update() retorna uno de los siguientes eventos (o None):
+      "link_lost"                  — primera detección de pérdida
+      "link_restored"              — recuperado sin retries
+      "reconnect_attempt_failed"   — intento de reconexión fallido
+      "reconnect_attempt_succeeded"— enlace recuperado tras retries
+      "max_retries_exceeded"       — reintentos agotados → loop fuerza STB
+    """
+
+    def __init__(self,
+                 link_lost_s:      float = GCS_LINK_LOST_S,
+                 retry_interval_s: float = GCS_RETRY_INTERVAL_S,
+                 max_retries:      int   = GCS_MAX_RETRIES):
+        self._state          : CommLinkState = CommLinkState.COMUNICAR
+        self._link_lost_s    : float         = link_lost_s
+        self._retry_interval : float         = retry_interval_s
+        self._max_retries    : int           = max_retries
+        self._retry_count    : int           = 0
+        self._last_retry_ts  : float         = 0.0
+
+    @property
+    def state(self) -> CommLinkState:
+        return self._state
+
+    @property
+    def is_lost(self) -> bool:
+        return self._state == CommLinkState.GESTION_ENLACE
+
+    @property
+    def retry_count(self) -> int:
+        return self._retry_count
+
+    def update(self, last_gcs_time: float, now: float,
+               gcs_source=None) -> "str | None":
+        """
+        Evalúa el estado del enlace GCS y ejecuta la política de reintentos.
+
+        last_gcs_time : time.monotonic() del último paquete recibido del GCS.
+        now           : time.monotonic() actual.
+        gcs_source    : GCSSource opcional — si se proporciona se envía HB_REQ
+                        en cada intento de reconexión.
+
+        Retorna el evento ocurrido en este ciclo, o None si no hubo cambio.
+        """
+        silent_s = now - last_gcs_time
+
+        if self._state == CommLinkState.COMUNICAR:
+            if silent_s > self._link_lost_s:
+                self._state         = CommLinkState.GESTION_ENLACE
+                self._retry_count   = 0
+                self._last_retry_ts = now
+                return "link_lost"
+            return None
+
+        # ── GESTION_ENLACE ──────────────────────────────────────────────────
+
+        # Enlace recuperado (se recibió un paquete GCS reciente)
+        if silent_s <= self._link_lost_s:
+            had_retries       = self._retry_count > 0
+            self._state       = CommLinkState.COMUNICAR
+            self._retry_count = 0
+            return "reconnect_attempt_succeeded" if had_retries else "link_restored"
+
+        # Reintentos agotados — el loop principal forzará STB
+        if self._retry_count >= self._max_retries:
+            return "max_retries_exceeded"
+
+        # Probe periódico de reconexión
+        if now - self._last_retry_ts >= self._retry_interval:
+            self._retry_count  += 1
+            self._last_retry_ts = now
+            if gcs_source is not None:
+                gcs_source.send_probe()
+            return "reconnect_attempt_failed"
+
+        return None
+
+
 # ─── Logger ──────────────────────────────────────────────────────────────────
 
 class OlympusLogger:
@@ -548,6 +655,17 @@ class OlympusLogger:
     def log_cycle(self, cycle_ms: float) -> None:
         """Log periódico de tiempo de ciclo para verificación de RNF-001."""
         self._write("DEBUG", "CYCLE", f"{cycle_ms:.1f} ms")
+
+    def log_link_event(self, event: str, detail: str = "") -> None:
+        """
+        Auditoría de evento de enlace GCS (SRS-013, §7.3.8).
+        Registra transición de estado CommLink con timestamp ISO-8601.
+        """
+        warn = event in ("link_lost", "reconnect_attempt_failed",
+                         "max_retries_exceeded")
+        level = "WARN" if warn else "INFO"
+        msg   = f"GCS link event={event}" + (f" — {detail}" if detail else "")
+        self._write(level, "COMM", msg)
 
     def close(self) -> None:
         """
@@ -968,6 +1086,102 @@ class VisionSource:
         pass  # No persistent process to clean up with rpicam-still
 
 
+class GCSSource:
+    """
+    Recibe comandos y heartbeats del GCS vía UDP no-bloqueante (SRS-013).
+
+    Protocolo UDP GCS→HLC (puerto GCS_LISTEN_PORT):
+      CMD:<command>       — comando MSM  (ej. "CMD:EXP:40:40", "CMD:STB")
+      HB                  — heartbeat del GCS (actualiza last_recv_time)
+      HB_ACK:<seq>        — respuesta a probe HB_REQ enviado por el HLC
+
+    Protocolo UDP HLC→GCS (puerto GCS_REPLY_PORT en la dirección del GCS):
+      <línea TLM cruda>   — reenvío del frame TLM recibido del Arduino (downlink)
+      HB_REQ:<seq>        — probe de reconexión enviado por CommLinkMonitor
+
+    La dirección del GCS se aprende del primer paquete recibido; hasta entonces
+    forward_tlm() y send_probe() son silenciosos (no hay destino conocido).
+
+    next_command() es no-bloqueante: retorna None si no hay comando en la cola.
+    """
+
+    _PROBE_PREFIX = "HB_REQ"
+
+    def __init__(self,
+                 bind_addr:   str = GCS_BIND_ADDR,
+                 listen_port: int = GCS_LISTEN_PORT,
+                 reply_port:  int = GCS_REPLY_PORT):
+        self._sock        = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind((bind_addr, listen_port))
+        self._sock.setblocking(False)
+        self._reply_port  = reply_port
+        self._gcs_addr    = None          # (ip, reply_port) — se aprende dinámicamente
+        self._last_recv   = time.monotonic()
+        self._probe_seq   = 0
+        print(f"[GCSSource] Escuchando en UDP {bind_addr}:{listen_port} "
+              f"(downlink → :{reply_port})")
+
+    @property
+    def last_recv_time(self) -> float:
+        """Monotonic timestamp del último paquete recibido del GCS."""
+        return self._last_recv
+
+    def next_command(self) -> "str | None":
+        """
+        Intenta leer un paquete UDP del GCS.
+        Retorna la cadena de comando MSM (ej. "EXP:40:40") o None si no hay nada.
+        Heartbeats (HB, HB_ACK) solo actualizan last_recv_time.
+        """
+        try:
+            data, addr = self._sock.recvfrom(256)
+        except BlockingIOError:
+            return None
+        except OSError:
+            return None
+
+        self._last_recv = time.monotonic()
+        self._gcs_addr  = (addr[0], self._reply_port)
+
+        msg = data.decode("utf-8", errors="replace").strip()
+        if msg.startswith("CMD:"):
+            return msg[4:]   # "CMD:EXP:40:40" → "EXP:40:40"
+        # HB / HB_ACK:<seq> — solo actualiza last_recv_time (ya hecho arriba)
+        return None
+
+    def send_probe(self) -> None:
+        """
+        Envía HB_REQ:<seq> al GCS como probe de reconexión.
+        Silencioso si la dirección del GCS aún no es conocida.
+        """
+        if self._gcs_addr is None:
+            return
+        self._probe_seq += 1
+        msg = f"{self._PROBE_PREFIX}:{self._probe_seq}\n".encode()
+        try:
+            self._sock.sendto(msg, self._gcs_addr)
+        except OSError:
+            pass
+
+    def forward_tlm(self, raw_tlm: str) -> None:
+        """
+        Reenvía un frame TLM crudo al GCS vía UDP (downlink SRS-020).
+        Silencioso si la dirección del GCS aún no es conocida.
+        """
+        if self._gcs_addr is None:
+            return
+        try:
+            self._sock.sendto((raw_tlm + "\n").encode(), self._gcs_addr)
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+
 # ─── Response parser ─────────────────────────────────────────────────────────
 
 # Kinds returned by parse_response():
@@ -1085,6 +1299,10 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
     last_storage_check = 0               # ciclo del último check de disco
     cycle_count     = 0
 
+    # SRS-013 — CommLinkMonitor activo solo en modo GCS
+    comm_link        = CommLinkMonitor() if isinstance(source, GCSSource) else None
+    gcs_stb_forced   = False   # True cuando max_retries agotados → STB permanente
+
     try:
         while True:
             cycle_start = time.monotonic()
@@ -1092,6 +1310,39 @@ def run(rover, source, mode, log_path=OlympusLogger.DEFAULT_LOG_PATH):
             # Drenar TLM asíncrono pendiente antes de cualquier comando
             raw_tlm = rover.recv_tlm()
             tlm_override = None
+
+            # SRS-013 / SRS-020 — reenviar TLM al GCS (downlink) y evaluar enlace
+            if raw_tlm and isinstance(source, GCSSource):
+                source.forward_tlm(raw_tlm)
+
+            if comm_link is not None:
+                now = time.monotonic()
+                link_event = comm_link.update(source.last_recv_time, now, source)
+                if link_event == "link_lost":
+                    log.log_link_event(link_event,
+                                       f">{GCS_LINK_LOST_S:.0f}s sin paquete GCS — "
+                                       f"transición a {CommLinkState.GESTION_ENLACE.value} "
+                                       f"(SRS-013)")
+                elif link_event in ("link_restored", "reconnect_attempt_succeeded"):
+                    log.log_link_event(link_event,
+                                       f"retorno a {CommLinkState.COMUNICAR.value} "
+                                       f"(SRS-013)")
+                    gcs_stb_forced = False
+                elif link_event == "reconnect_attempt_failed":
+                    log.log_link_event(link_event,
+                                       f"intento {comm_link.retry_count}/{GCS_MAX_RETRIES} "
+                                       f"— HB_REQ enviado")
+                elif link_event == "max_retries_exceeded":
+                    if not gcs_stb_forced:
+                        log.log_link_event(link_event,
+                                           f"reintentos agotados ({GCS_MAX_RETRIES}) — "
+                                           f"forzando STB permanente (SRS-013)")
+                        gcs_stb_forced = True
+
+                # SYS-FUN-021: enlace perdido → forzar STB si reintentos agotados
+                if gcs_stb_forced:
+                    tlm_override = "STB"
+
             if raw_tlm:
                 last_tlm_time = time.monotonic()
                 if tlm_loss_level > 0:
@@ -1290,9 +1541,10 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["vision", "manual"],
+        choices=["vision", "manual", "gcs"],
         required=True,
-        help="Command source: 'vision' (camera+YOLOv8n) or 'manual' (stdin)"
+        help="Command source: 'vision' (camera+YOLOv8n), 'manual' (stdin) "
+             "or 'gcs' (UDP commands from Ground Control Station, SRS-013)"
     )
     parser.add_argument(
         "--model",
@@ -1336,6 +1588,8 @@ def main():
 
     if args.mode == "manual":
         source = ManualSource()
+    elif args.mode == "gcs":
+        source = GCSSource()
     else:
         source = VisionSource(args.model)
 
@@ -1344,6 +1598,8 @@ def main():
     finally:
         if isinstance(source, VisionSource):
             source.release()
+        elif isinstance(source, GCSSource):
+            source.close()
 
 
 if __name__ == "__main__":
