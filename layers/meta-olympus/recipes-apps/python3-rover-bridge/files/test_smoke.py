@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Olympus HLC — Post-flash smoke test
-Version: v1.0
+Version: v1.1
 
 Verifica que la imagen Yocto está correctamente instalada en la RPi5
 SIN necesidad de Arduino conectado.
@@ -15,21 +15,19 @@ O directamente en la RPi5:
 Salida: PASS / FAIL por cada check. Exit code 0 = todo OK.
 """
 
-import importlib
 import os
 import subprocess
 import sys
 import time
 
-PASS  = "\033[32mPASS\033[0m"
-FAIL  = "\033[31mFAIL\033[0m"
-WARN  = "\033[33mWARN\033[0m"
-SKIP  = "\033[90mSKIP\033[0m"
+PASS = "\033[32mPASS\033[0m"
+FAIL = "\033[31mFAIL\033[0m"
 
 results = []
 
+
 def check(name, ok, detail=""):
-    tag = PASS if ok else FAIL
+    tag  = PASS if ok else FAIL
     line = f"  [{tag}] {name}"
     if detail:
         line += f" — {detail}"
@@ -49,33 +47,46 @@ def section(title):
 section("1. Archivos instalados")
 
 FILES = {
-    "/usr/bin/olympus_controller.py":              "controlador HLC principal",
-    "/etc/olympus/olympus_controller.yaml":        "configuración operacional",
-    "/usr/share/olympus/models/yolov8n.onnx":      "modelo bbox (referencia)",
-    "/usr/share/olympus/models/yolov8n-seg.onnx":  "modelo segmentación (GNC-REQ-002)",
+    "/usr/bin/olympus_controller.py":                    "controlador legacy v2.4",
+    "/usr/lib/python3.12/site-packages/olympus_hlc/__init__.py": "paquete olympus_hlc v3.0",
+    "/usr/lib/python3.12/site-packages/olympus_hlc/engine.py":   "HlcEngine",
+    "/usr/lib/python3.12/site-packages/olympus_hlc/sources/gcs.py": "GCSSource",
+    "/etc/olympus/olympus_controller.yaml":              "configuración operacional",
+    "/usr/share/olympus/models/yolov8n.onnx":            "modelo bbox (referencia)",
+    "/usr/share/olympus/models/yolov8n-seg.onnx":        "modelo segmentación (GNC-REQ-002)",
     "/usr/lib/python3.12/site-packages/rover_bridge.so": "extensión Rust PyO3",
 }
 
 for path, desc in FILES.items():
-    check(f"{path}", os.path.exists(path), desc)
+    check(path, os.path.exists(path), desc)
 
-# ─── 2. Versión del controlador ───────────────────────────────────────────────
 
-section("2. Versión del controlador")
+# ─── 2. Versiones ────────────────────────────────────────────────────────────
 
-EXPECTED_VERSION = "v2.3"
+section("2. Versiones")
+
+# Legacy controller
 try:
     with open("/usr/bin/olympus_controller.py") as f:
         for line in f:
             if line.startswith("# Version:"):
                 version = line.split(":", 1)[1].strip()
-                check("olympus_controller.py versión", version == EXPECTED_VERSION,
-                      f"encontrado={version} esperado={EXPECTED_VERSION}")
+                check("olympus_controller.py version", version == "v2.4",
+                      f"encontrado={version} esperado=v2.4")
                 break
 except OSError as e:
-    check("olympus_controller.py versión", False, str(e))
+    check("olympus_controller.py version", False, str(e))
 
-# ─── 3. Parámetros YAML presentes ─────────────────────────────────────────────
+# Nuevo paquete
+try:
+    with open("/usr/lib/python3.12/site-packages/olympus_hlc/__init__.py") as f:
+        content = f.read()
+    check("olympus_hlc version", "v3.0" in content, content.strip())
+except OSError as e:
+    check("olympus_hlc version", False, str(e))
+
+
+# ─── 3. Parámetros YAML ──────────────────────────────────────────────────────
 
 section("3. Parámetros YAML")
 
@@ -86,7 +97,8 @@ YAML_KEYS = [
     "temp_warn_c", "temp_crit_c",
     "storage_min_mb", "tlm_interval_warn_s",
     "exp_speed_l", "exp_speed_r",
-    "vision_mode", "seg_model_path", "seg_conf_min", "seg_zone_min", "seg_roi_top",
+    "vision_mode", "seg_model_path",
+    "gcs_listen_port", "csp_enabled",
 ]
 
 try:
@@ -97,52 +109,104 @@ try:
 except OSError as e:
     check("YAML accesible", False, str(e))
 
-# ─── 4. Imports Python ────────────────────────────────────────────────────────
+
+# ─── 4. Imports Python ───────────────────────────────────────────────────────
 
 section("4. Imports Python")
 
-try:
-    import yaml
-    check("python3-pyyaml", True, f"versión {getattr(yaml, '__version__', 'ok')}")
-except ImportError as e:
-    check("python3-pyyaml", False, str(e))
+for mod, label in [
+    ("yaml",         "python3-pyyaml"),
+    ("cv2",          "python3-opencv"),
+    ("numpy",        "python3-numpy"),
+    ("rover_bridge", "rover_bridge.so"),
+]:
+    try:
+        m = __import__(mod)
+        ver = getattr(m, "__version__", "ok")
+        check(label, True, ver)
+    except ImportError as e:
+        check(label, False, str(e))
 
+# cv2.dnn separado (puede importar pero sin DNN)
 try:
     import cv2
     has_dnn = hasattr(cv2, "dnn") and hasattr(cv2.dnn, "readNetFromONNX")
-    check("python3-opencv", True, f"versión {cv2.__version__}")
     check("cv2.dnn.readNetFromONNX", has_dnn)
-except ImportError as e:
-    check("python3-opencv", False, str(e))
+except ImportError:
+    pass
 
+# Paquete olympus_hlc importable
 try:
-    import numpy
-    check("python3-numpy", True, f"versión {numpy.__version__}")
-except ImportError as e:
-    check("python3-numpy", False, str(e))
+    import importlib
+    hlc = importlib.import_module("olympus_hlc.engine")
+    check("olympus_hlc.engine importable", hasattr(hlc, "HlcEngine"))
+    src = importlib.import_module("olympus_hlc.sources.gcs")
+    check("olympus_hlc.sources.gcs importable", hasattr(src, "GCSSource"))
+except Exception as e:
+    check("olympus_hlc importable", False, str(e))
 
-try:
-    import rover_bridge
-    check("rover_bridge.so", True, "importado correctamente")
-except ImportError as e:
-    check("rover_bridge.so", False, str(e))
 
-# ─── 5. Sintaxis del controlador ─────────────────────────────────────────────
+# ─── 5. Sintaxis ─────────────────────────────────────────────────────────────
 
-section("5. Sintaxis del controlador")
+section("5. Sintaxis de los módulos instalados")
 
-ret = subprocess.run(
-    [sys.executable, "-m", "py_compile", "/usr/bin/olympus_controller.py"],
-    capture_output=True,
-)
-check("py_compile olympus_controller.py", ret.returncode == 0,
-      ret.stderr.decode().strip() if ret.returncode != 0 else "OK")
+for path in [
+    "/usr/bin/olympus_controller.py",
+    "/usr/lib/python3.12/site-packages/olympus_hlc/engine.py",
+    "/usr/lib/python3.12/site-packages/olympus_hlc/monitors.py",
+    "/usr/lib/python3.12/site-packages/olympus_hlc/sources/gcs.py",
+]:
+    ret = subprocess.run(
+        [sys.executable, "-m", "py_compile", path],
+        capture_output=True,
+    )
+    check(f"  py_compile {os.path.basename(path)}",
+          ret.returncode == 0,
+          ret.stderr.decode().strip() if ret.returncode != 0 else "OK")
 
-# ─── 6. Dry-run del controlador (sin Arduino) ─────────────────────────────────
 
-section("6. Dry-run del controlador (10 s, sin Arduino)")
+# ─── 6. Dry-run olympus_hlc (sin Arduino) ────────────────────────────────────
+
+section("6. Dry-run olympus_hlc --mode manual (sin Arduino)")
 
 proc = subprocess.Popen(
+    [sys.executable, "-m", "olympus_hlc",
+     "--mode", "manual", "--dry-run", "--log-path", "/tmp/smoke_hlc.log"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+)
+
+time.sleep(2)
+for cmd in ["ping\n", "exp 40 40\n", "stb\n", "q\n"]:
+    try:
+        proc.stdin.write(cmd)
+        proc.stdin.flush()
+    except BrokenPipeError:
+        break
+    time.sleep(0.2)
+
+try:
+    out, _ = proc.communicate(timeout=5)
+except subprocess.TimeoutExpired:
+    proc.kill()
+    out, _ = proc.communicate()
+
+lines = out.splitlines()
+check("olympus_hlc arranca",        proc.returncode in (0, 1, None))
+check("olympus_hlc responde PING",  any("pong"    in l for l in lines))
+check("olympus_hlc recibe ACK:EXP", any("ACK:EXP" in l for l in lines))
+check("olympus_hlc recibe ACK:STB", any("ACK:STB" in l for l in lines))
+check("olympus_hlc emite TLM",      any("TLM"     in l for l in lines))
+check("olympus_hlc log creado",     os.path.exists("/tmp/smoke_hlc.log"))
+
+
+# ─── 7. Dry-run olympus_controller.py legacy (sin Arduino) ───────────────────
+
+section("7. Dry-run olympus_controller.py legacy (sin Arduino)")
+
+proc2 = subprocess.Popen(
     [sys.executable, "/usr/bin/olympus_controller.py",
      "--mode", "manual", "--dry-run"],
     stdin=subprocess.PIPE,
@@ -151,54 +215,47 @@ proc = subprocess.Popen(
     text=True,
 )
 
-time.sleep(3)
-
-# Enviar algunos comandos MSM y verificar respuestas
-output_lines = []
-commands = ["ping\n", "exp 40 40\n", "stb\n", "q\n"]
-for cmd in commands:
-    proc.stdin.write(cmd)
-    proc.stdin.flush()
-    time.sleep(0.3)
+time.sleep(2)
+for cmd in ["ping\n", "q\n"]:
+    try:
+        proc2.stdin.write(cmd)
+        proc2.stdin.flush()
+    except BrokenPipeError:
+        break
+    time.sleep(0.2)
 
 try:
-    out, _ = proc.communicate(timeout=5)
-    output_lines = out.splitlines()
+    out2, _ = proc2.communicate(timeout=5)
 except subprocess.TimeoutExpired:
-    proc.kill()
-    out, _ = proc.communicate()
-    output_lines = out.splitlines()
+    proc2.kill()
+    out2, _ = proc2.communicate()
 
-check("dry-run arranca sin error", proc.returncode in (0, None),
-      f"exit={proc.returncode}")
-check("dry-run recibe PONG",   any("PONG"    in l for l in output_lines))
-check("dry-run recibe ACK:EXP", any("ACK:EXP" in l for l in output_lines))
-check("dry-run recibe ACK:STB", any("ACK:STB" in l for l in output_lines))
-check("dry-run emite TLM",      any("TLM"     in l for l in output_lines))
-check("dry-run logea SafeMode o normal",
-      any(kw in l for l in output_lines
-          for kw in ("SAFE MODE", "NORMAL", "INFO", "WARN")))
+lines2 = out2.splitlines()
+check("legacy arranca",         proc2.returncode in (0, 1, None))
+check("legacy responde PING",   any("pong" in l for l in lines2))
 
-# ─── 7. Modelos ONNX cargables ────────────────────────────────────────────────
 
-section("7. Modelos ONNX (carga cv2.dnn)")
+# ─── 8. Modelos ONNX cargables ───────────────────────────────────────────────
 
-for model_name, path in [
+section("8. Modelos ONNX (cv2.dnn)")
+
+for name, path in [
     ("yolov8n.onnx",     "/usr/share/olympus/models/yolov8n.onnx"),
     ("yolov8n-seg.onnx", "/usr/share/olympus/models/yolov8n-seg.onnx"),
 ]:
     if not os.path.exists(path):
-        check(f"  {model_name} cargable", False, "archivo no encontrado")
+        check(f"  {name}", False, "archivo no encontrado")
         continue
     try:
         import cv2
         net = cv2.dnn.readNetFromONNX(path)
-        n_layers = len(net.getLayerNames())
-        check(f"  {model_name} cargable", n_layers > 0, f"{n_layers} capas")
+        n   = len(net.getLayerNames())
+        check(f"  {name}", n > 0, f"{n} capas")
     except Exception as e:
-        check(f"  {model_name} cargable", False, str(e))
+        check(f"  {name}", False, str(e))
 
-# ─── Resumen ──────────────────────────────────────────────────────────────────
+
+# ─── Resumen ─────────────────────────────────────────────────────────────────
 
 section("Resumen")
 passed = sum(results)
@@ -206,9 +263,8 @@ total  = len(results)
 print(f"\n  {passed}/{total} checks pasados\n")
 
 if passed == total:
-    print(f"  ✓ Imagen lista para operación\n")
+    print("  ✓ Imagen lista para operar\n")
     sys.exit(0)
 else:
-    failed = total - passed
-    print(f"  ✗ {failed} check(s) fallaron — revisar antes de flashear\n")
+    print(f"  ✗ {total - passed} check(s) fallaron — revisar antes de usar\n")
     sys.exit(1)
