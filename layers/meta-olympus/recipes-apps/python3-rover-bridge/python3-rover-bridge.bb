@@ -1,4 +1,4 @@
-# Version: v1.4
+# Version: v1.5
 SUMMARY = "Extensión nativa de Python en Rust para control de Rover (Olympus Bridge)"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
@@ -10,6 +10,7 @@ SRC_URI = "file://rover-bridge/ \
            file://test_ultrasonic_rpi.py \
            file://test_opencv_camera.py \
            file://olympus_controller.py \
+           file://olympus_hlc/ \
            file://test_smoke.py \
            file://yolov8n.onnx \
            file://yolov8n-seg.onnx \
@@ -59,6 +60,13 @@ do_install() {
     install -m 0755 ${WORKDIR}/test_opencv_camera.py ${D}${bindir}/test_opencv_camera.py
     install -m 0755 ${WORKDIR}/olympus_controller.py ${D}${bindir}/olympus_controller.py
 
+    # Instalar el paquete olympus_hlc (refactorización SOLID, v3.0)
+    install -d ${D}${PYTHON_SITEPACKAGES_DIR}/olympus_hlc/sources
+    cp -r ${WORKDIR}/olympus_hlc/. ${D}${PYTHON_SITEPACKAGES_DIR}/olympus_hlc/
+    # Entry point del paquete (invocable como script)
+    ln -sf ${PYTHON_SITEPACKAGES_DIR}/olympus_hlc/__main__.py \
+           ${D}${bindir}/olympus_hlc
+
     install -d ${D}${datadir}/olympus/models
     install -m 0644 ${WORKDIR}/yolov8n.onnx ${D}${datadir}/olympus/models/yolov8n.onnx
     install -m 0644 ${WORKDIR}/yolov8n-seg.onnx ${D}${datadir}/olympus/models/yolov8n-seg.onnx
@@ -68,6 +76,7 @@ do_install() {
 }
 
 FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
+                ${PYTHON_SITEPACKAGES_DIR}/olympus_hlc/ \
                 ${bindir}/test_smoke.py \
                 ${bindir}/test_rover.py \
                 ${bindir}/test_bridge.py \
@@ -75,6 +84,7 @@ FILES:${PN} += "${PYTHON_SITEPACKAGES_DIR}/rover_bridge.so \
                 ${bindir}/test_ultrasonic_rpi.py \
                 ${bindir}/test_opencv_camera.py \
                 ${bindir}/olympus_controller.py \
+                ${bindir}/olympus_hlc \
                 ${datadir}/olympus/models/yolov8n.onnx \
                 ${datadir}/olympus/models/yolov8n-seg.onnx \
                 ${sysconfdir}/olympus/olympus_controller.yaml"

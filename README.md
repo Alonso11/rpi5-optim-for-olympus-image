@@ -10,12 +10,14 @@ an Arduino Mega 2560 (Low-Level Controller) over UART/USB using the MSM protocol
 ┌──────────────────────────────────────┐        ┌──────────────────────────────────┐
 │  Raspberry Pi 5 (HLC)                │        │  Arduino Mega 2560 (LLC)         │
 │                                      │        │                                  │
-│  olympus_controller.py (v1.7)        │        │  MSM: STB/EXP/AVD/RET/FLT       │
-│  ├── VisionSource (YOLOv8n ONNX)     │        │                                  │
-│  ├── ManualSource (stdin)            │        │  6 Motors (PWM L298N)            │
-│  ├── WaypointTracker                 │        │  HC-SR04 D38/D39 (< 200 mm → FAULT) │
-│  ├── EnergyMonitor (4S Li-ion)       │        │  VL53L0X ToF I2C (< 150 mm → FAULT) │
-│  └── OlympusLogger → /var/log/       │        │  6 Hall encoders (INT0–INT5)     │
+│  olympus_hlc/ (v3.0)                 │        │  MSM: STB/EXP/AVD/RET/FLT       │
+│  ├── HlcEngine (bucle de control)    │        │                                  │
+│  ├── VisionSource (YOLOv8n ONNX)     │        │  6 Motors (PWM L298N)            │
+│  ├── ManualSource (stdin)            │        │  HC-SR04 D38/D39 (< 200 mm → FAULT) │
+│  ├── GCSSource (UDP CSP/CRC-32)      │        │  VL53L0X ToF I2C (< 150 mm → FAULT) │
+│  ├── WaypointTracker                 │        │  6 Hall encoders (INT0–INT5)     │
+│  ├── EnergyMonitor (4S Li-ion)       │        │                                  │
+│  └── OlympusLogger → /var/log/       │        │                                  │
 │                                      │        │                                  │
 │  rover_bridge.so (Rust/PyO3) ────────┼─ USB ──┼─── USART0 (CDC-ACM 115200 8N1)  │
 │  /dev/arduino_mega                   │        │                                  │
@@ -66,14 +68,23 @@ See [docs/build-and-deploy.md](docs/build-and-deploy.md) for detailed instructio
 ssh root@<IP_RPi5>
 
 # Manual mode — send MSM commands from stdin
-olympus_controller.py --mode manual
+python3 -m olympus_hlc --mode manual
 
 # Vision mode — obstacle detection via YOLOv8n + CSI camera
-olympus_controller.py --mode vision
+python3 -m olympus_hlc --mode vision
+
+# GCS mode — UDP commands from Ground Control Station (CSP/CRC-32, SRS-013)
+python3 -m olympus_hlc --mode gcs
+
+# Dry-run (no Arduino required — for testing)
+python3 -m olympus_hlc --mode manual --dry-run
 
 # Custom log path
-olympus_controller.py --mode vision --log-path /var/log/olympus/mission.log
+python3 -m olympus_hlc --mode vision --log-path /var/log/olympus/mission.log
 ```
+
+> The legacy `olympus_controller.py` script (v2.4) is still installed at
+> `/usr/bin/olympus_controller.py` for backwards compatibility.
 
 The controller connects to `/dev/arduino_mega` at 115200 baud and manages
 the MSM state machine (STB → EXP → AVD/RET → STB). It sends `PING` every 1 s
@@ -97,9 +108,11 @@ when idle to keep the Arduino watchdog alive (~2 s timeout → FAULT).
 | Component | Description |
 |-----------|-------------|
 | `rover_bridge.so` | Rust/PyO3 module — MSM UART protocol with the Arduino |
-| `olympus_controller.py` | Main HLC controller v1.7 (manual + vision modes) |
+| `olympus_hlc/` | HLC package v3.0 (SOLID refactor) — `python3 -m olympus_hlc` |
+| `olympus_controller.py` | Legacy HLC controller v2.4 (kept for backwards compat) |
 | `olympus_controller.yaml` | Operational config at `/etc/olympus/` (editable without rebuilding) |
 | `yolov8n.onnx` | Obstacle detection model (YOLOv8n opset 12, 13 MB) |
+| `yolov8n-seg.onnx` | Segmentation model (YOLOv8n-seg opset 12, 14 MB — GNC-REQ-002) |
 | `custom-udev-rules` | Stable symlink `/dev/arduino_mega` |
 | `wifi-config` | Automatic WiFi connection (wpa_supplicant) |
 | `wifi-power-save` | WiFi power saving (systemd oneshot) |

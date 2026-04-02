@@ -139,7 +139,40 @@ scp root@<IP_RPi5>:/root/camera_test_raw.jpg ./
 
 ---
 
-### 7. `olympus_controller.py` — Controlador HLC completo
+### 7. `olympus_hlc` — Paquete HLC v3.0
+
+#### Tests unitarios (sin hardware)
+
+Requieren únicamente Python 3 y `pytest`. Se ejecutan en cualquier máquina.
+
+```bash
+# En la máquina de desarrollo (no se necesita la RPi5)
+cd olympus-hlc-rpi5/layers/meta-olympus/recipes-apps/python3-rover-bridge/files
+pip install pytest
+pytest tests/ -v
+```
+
+Resultado esperado:
+```
+tests/test_hlc.py::test_tlmframe_parse_valid         PASSED
+tests/test_hlc.py::test_tlmframe_parse_invalid       PASSED
+tests/test_hlc.py::test_roverstate_from_ack          PASSED
+tests/test_hlc.py::test_energy_monitor               PASSED
+tests/test_hlc.py::test_thermal_monitor              PASSED
+tests/test_hlc.py::test_slip_monitor                 PASSED
+tests/test_hlc.py::test_safe_mode_battery            PASSED
+tests/test_hlc.py::test_safe_mode_fault              PASSED
+tests/test_hlc.py::test_safe_mode_thermal            PASSED
+tests/test_hlc.py::test_safe_mode_reset              PASSED
+tests/test_hlc.py::test_waypoint_tracker             PASSED
+tests/test_hlc.py::test_comm_link_monitor            PASSED
+tests/test_hlc.py::test_csp_round_trip               PASSED
+tests/test_hlc.py::test_csp_bad_crc                  PASSED
+tests/test_hlc.py::test_parse_response               PASSED
+tests/test_hlc.py::test_dry_run_rover                PASSED
+tests/test_hlc.py::test_engine_dry_run               PASSED
+tests/test_hlc.py::test_engine_safe_mode_integration PASSED
+```
 
 #### Modo dry-run (sin Arduino)
 
@@ -147,17 +180,24 @@ Permite probar el loop completo sin hardware. `DryRunRover` emite TLM
 sintético cada ~1 s para que el watchdog no dispare.
 
 ```bash
-olympus_controller.py --mode manual --dry-run
+python3 -m olympus_hlc --mode manual --dry-run
 ```
 
 ```bash
-olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx --dry-run
+python3 -m olympus_hlc --mode vision --model /usr/share/olympus/models/yolov8n.onnx --dry-run
+```
+
+#### Modo GCS dry-run
+
+```bash
+python3 -m olympus_hlc --mode gcs --dry-run
+# Escucha en UDP :9000, reenvía TLM al GCS vía :9001
 ```
 
 #### Modo manual (con Arduino)
 
 ```bash
-olympus_controller.py --mode manual
+python3 -m olympus_hlc --mode manual
 ```
 
 Shortcuts en el prompt:
@@ -175,13 +215,13 @@ Shortcuts en el prompt:
 #### Modo visión (con Arduino + cámara)
 
 ```bash
-olympus_controller.py --mode vision --model /usr/share/olympus/models/yolov8n.onnx
+python3 -m olympus_hlc --mode vision --model /usr/share/olympus/models/yolov8n.onnx
 ```
 
 #### Opciones adicionales
 
 ```bash
-olympus_controller.py --mode manual \
+python3 -m olympus_hlc --mode manual \
     --port /dev/ttyACM0 \
     --baud 115200 \
     --log-path /tmp/hlc_test.log
@@ -194,6 +234,15 @@ olympus_controller.py --mode manual \
 [2026-03-29T10:00:01.124] [INFO ] [TLM    ] NORMAL stall=000000 batt=15200mV/1200mA dist=800mm t=1000ms
 [2026-03-29T10:00:01.125] [INFO ] [CMD    ] STB              → ack:STB
 [2026-03-29T10:00:01.126] [INFO ] [MSM    ] STB → STB  [ACK:STB]
+```
+
+#### Controlador legacy
+
+El script `olympus_controller.py` (v2.4) sigue instalado en `/usr/bin/` para
+compatibilidad. Acepta los mismos argumentos que el paquete nuevo.
+
+```bash
+olympus_controller.py --mode manual --dry-run
 ```
 
 ---

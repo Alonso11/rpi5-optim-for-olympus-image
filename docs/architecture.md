@@ -19,10 +19,10 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 │  rover_bridge.so (Rust/PyO3) ──────┼─ USB ──┼─── USART0 (CDC-ACM)             │
 │  /dev/arduino_mega                 │        │    MSM: STB/EXP/AVD/RET/FLT     │
 │                                    │        │                                  │
-│  olympus_controller.py (v2.3)      │        │  6 Motores (PWM L298N)           │
-│  OpenCV + cv2.dnn (YOLOv8n/-seg)  │        │  HC-SR04 D38(Trig) D39(Echo)     │
+│  olympus_hlc/ (v3.0)               │        │  6 Motores (PWM L298N)           │
+│  OpenCV + cv2.dnn (YOLOv8n/-seg)   │        │  HC-SR04 D38(Trig) D39(Echo)     │
 │  Cámara CSI (libcamera / V4L2)     │        │  VL53L0X (ToF I2C)               │
-│                                    │        │  6 Encoders Hall (INT0–INT5)     │
+│  UDP ←→ GCS (CSP/CRC-32, SRS-013) │        │  6 Encoders Hall (INT0–INT5)     │
 └────────────────────────────────────┘        └──────────────────────────────────┘
 ```
 
@@ -32,19 +32,32 @@ El proyecto Olympus implementa un rover controlado por dos nodos:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  olympus_controller.py (v2.3)                       │
-│  - _load_config() (YAML /etc/olympus/, fallback)    │
-│  - RoverMSM + RoverState (espejo estado Arduino)    │
-│  - TlmFrame parser (20 campos, ICD LLC)             │
-│  - WaypointTracker (5 puntos seguros, SyRS-061)     │
-│  - EnergyMonitor (4S Li-ion, EPS-REQ-001)           │
-│  - SlipMonitor (stall_mask TLM, RF-004)             │
-│  - ThermalMonitor (temp_c TLM, RNF-004)             │
-│  - SafeMode (batt/temp crítica / LLC FAULT, SYS-FUN-040) │
-│  - Link loss escalation: warn@5s/RET@10s/STB@30s   │
-│  - OlympusLogger (ISO-8601, RotatingFileHandler)    │
-│  - VisionSource (bbox: YOLOv8n / seg: YOLOv8n-seg)  │
-│  - ManualSource (stdin shortcuts)                   │
+│  olympus_hlc/ (v3.0) — paquete Python               │
+│                                                     │
+│  engine.py      HlcEngine — bucle de control        │
+│  ├── _tick_telemetry()  TLM drain + CommLink        │
+│  ├── _process_tlm_frame()  monitores + overrides    │
+│  ├── _handle_tlm_loss()  escalado warn/RET/STB      │
+│  ├── _dispatch()        envío cmd + ACK/ERR         │
+│  └── _shutdown()        apagado seguro SYS-FUN-050  │
+│                                                     │
+│  monitors.py    EnergyMonitor  (EPS-REQ-001)        │
+│                 ThermalMonitor (RNF-004)             │
+│                 SlipMonitor    (RF-004)              │
+│                 SafeMode       (SYS-FUN-040/041)    │
+│                 WaypointTracker (SyRS-061)           │
+│                 CommLinkMonitor (SRS-013)            │
+│                                                     │
+│  sources/       CommandSource ABC (DIP)             │
+│  ├── ManualSource   — stdin shortcuts               │
+│  ├── VisionSource   — YOLOv8n bbox / seg ONNX       │
+│  └── GCSSource      — UDP CSP/CRC-32 (SRS-001)     │
+│                                                     │
+│  models.py      TlmFrame, RoverState, Waypoint…     │
+│  config.py      _load_config() + constantes YAML    │
+│  logger.py      OlympusLogger ISO-8601              │
+│  csp.py         CSPPacket (SRS-001, RF-006)         │
+│  msm.py         RoverMSM, DryRunRover, _send        │
 ├─────────────────────────────────────────────────────┤
 │  rover_bridge.so  (Rust/PyO3 — v1.5)               │
 │  - send_command(cmd) → respuesta ASCII Arduino      │

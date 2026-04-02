@@ -1,0 +1,63 @@
+# olympus_hlc/interfaces.py — CommandSource abstract base class (DIP)
+#
+# Todas las fuentes de comandos implementan esta interfaz.
+# HlcEngine depende únicamente de CommandSource — nunca de tipos concretos.
+#
+# Métodos con implementación por defecto (comportamiento neutro):
+#   on_tlm()        — solo GCSSource reenvía TLM al GCS; otros ignoran
+#   last_recv_time  — ManualSource/VisionSource siempre "conectados"
+#   send_probe()    — solo GCSSource envía HB_REQ al GCS; otros no hacen nada
+#   make_link_monitor() — solo GCSSource retorna un CommLinkMonitor
+#   close()         — GCSSource cierra el socket; VisionSource libera cámara
+
+import abc
+import time
+
+
+class CommandSource(abc.ABC):
+
+    @abc.abstractmethod
+    def next_command(self, log=None) -> "str | None":
+        """
+        Retorna el siguiente comando MSM o None si no hay nada en este ciclo.
+        Debe ser no-bloqueante excepto en ManualSource (stdin interactivo).
+        """
+
+    def on_tlm(self, raw_tlm: str) -> None:  # noqa: ARG002
+        """
+        Llamado cuando el HLC recibe un frame TLM del Arduino.
+        GCSSource lo usa para reenviar el TLM al GCS (downlink SRS-020).
+        El resto de fuentes no hace nada.
+        """
+        pass
+
+    @property
+    def last_recv_time(self) -> float:
+        """
+        Monotonic timestamp del último paquete válido recibido.
+        GCSSource retorna el timestamp real del último UDP recibido.
+        ManualSource y VisionSource retornan time.monotonic() —
+        se considera que siempre están "conectadas" (no hay enlace que monitorear).
+        """
+        return time.monotonic()
+
+    def send_probe(self) -> None:
+        """
+        Envía un probe de reconexión al peer remoto.
+        GCSSource envía HB_REQ al GCS. El resto no hace nada.
+        Llamado por CommLinkMonitor durante la política de reintentos.
+        """
+
+    def make_link_monitor(self) -> "object | None":
+        """
+        Retorna una instancia de CommLinkMonitor si esta fuente soporta
+        monitoreo de enlace, o None en caso contrario.
+        Solo GCSSource retorna un CommLinkMonitor (SRS-013).
+        """
+        return None
+
+    def close(self) -> None:
+        """
+        Libera recursos asociados a esta fuente (sockets, procesos, handles).
+        Se llama una sola vez al finalizar el programa.
+        """

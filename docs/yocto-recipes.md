@@ -15,7 +15,8 @@ olympus-image (v1.5)
 ├── wifi-power-save            → power save chip WiFi (systemd)
 ├── python3-rover-bridge       → HLC completo (Python + Rust + modelos ONNX)
 │   ├── rover_bridge.so        (extensión PyO3/Rust — protocolo MSM)
-│   ├── olympus_controller.py  (controlador principal v2.3)
+│   ├── olympus_hlc/           (paquete HLC v3.0 — SOLID refactor, site-packages)
+│   ├── olympus_controller.py  (controlador legacy v2.4 — compatibilidad)
 │   ├── olympus_controller.yaml (config operacional → /etc/olympus/)
 │   ├── test_*.py              (scripts de prueba hardware)
 │   ├── yolov8n.onnx           (detección bbox, opset 12, 13 MB — referencia)
@@ -52,14 +53,16 @@ con `IMAGE_INSTALL:append`.
 
 ### Apps (recipes-apps)
 
-#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.4
+#### `recipes-apps/python3-rover-bridge/python3-rover-bridge.bb` — v1.5
 
 Receta principal del HLC. Instala en el target:
 
 | Fichero | Destino |
 |---------|---------|
 | `rover_bridge.so` | `/usr/lib/python3.12/site-packages/` |
-| `olympus_controller.py` | `/usr/bin/` |
+| `olympus_hlc/` | `/usr/lib/python3.12/site-packages/olympus_hlc/` |
+| `olympus_controller.py` | `/usr/bin/` (legacy v2.4) |
+| `olympus_hlc` (symlink) | `/usr/bin/olympus_hlc → __main__.py` |
 | `test_bridge.py` | `/usr/bin/` |
 | `test_bridge_interactive.py` | `/usr/bin/` |
 | `test_ultrasonic_rpi.py` | `/usr/bin/` |
@@ -74,7 +77,8 @@ Receta principal del HLC. Instala en el target:
 
 #### Configuración operacional (`/etc/olympus/olympus_controller.yaml`)
 
-`olympus_controller.py` v2.3 carga parámetros desde este fichero YAML al inicio.
+`olympus_hlc/config.py` (y el legacy `olympus_controller.py` v2.4) cargan parámetros
+desde este fichero YAML al inicio.
 Permite ajustar las siguientes constantes operacionales sin recompilar la imagen:
 
 - **LLC:** `ping_interval_s`, `tlm_warn_s`, `tlm_retreat_s`, `tlm_stb_s`, `cycle_warn_ms`, `cycle_log_period`

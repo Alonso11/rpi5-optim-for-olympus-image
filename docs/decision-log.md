@@ -6,6 +6,21 @@ el inicio del proyecto.
 
 ---
 
+## Semana 4 — Refactorización SOLID del HLC (1–2 abr 2026)
+
+| Fecha | Decisión | Motivo |
+|---|---|---|
+| 2026-04-01 | Refactorizar `olympus_controller.py` (v2.4, 1767 líneas) en el paquete `olympus_hlc/` (v3.0, 14 módulos) | `run()` de 251 líneas mezclaba TLM processing, CommLink, monitores y dispatch. Los `isinstance(source, GCSSource)` en el loop violaban OCP/DIP — agregar una fuente nueva requería modificar el bucle |
+| 2026-04-01 | Introducir `CommandSource` ABC (`interfaces.py`) con métodos `on_tlm()`, `last_recv_time`, `send_probe()`, `make_link_monitor()`, `close()` | Eliminar los 4 `isinstance` de source del loop original. `HlcEngine` depende solo de la interfaz — nunca de `GCSSource`, `VisionSource` o `ManualSource` directamente (DIP) |
+| 2026-04-01 | Extraer `models.py` con todos los dataclasses y enums puros | Evitar importaciones circulares. Todos los módulos pueden importar `TlmFrame`, `RoverState`, etc. sin traer lógica de negocio |
+| 2026-04-01 | Dividir `run()` en `_tick_telemetry()`, `_process_tlm_frame()`, `_handle_tlm_loss()`, `_dispatch()`, `_keepalive()`, `_check_cycle()`, `_check_storage()`, `_shutdown()` | SRP: cada método tiene una responsabilidad única y se puede testear de forma aislada |
+| 2026-04-01 | Mantener `olympus_controller.py` v2.4 en `/usr/bin/` sin modificarlo | Compatibilidad: cualquier script o servicio systemd que lo invoque sigue funcionando sin cambio |
+| 2026-04-01 | Actualizar `python3-rover-bridge.bb` v1.4 → v1.5 para instalar `olympus_hlc/` en `site-packages` | El paquete Python debe estar en `sys.path` de la imagen; `cp -r` en `do_install` + `FILES` wildcard `${PYTHON_SITEPACKAGES_DIR}/olympus_hlc/` |
+| 2026-04-01 | No usar ABC para monitores (`EnergyMonitor`, etc.) | Las firmas de `update()` son demasiado distintas para una interfaz útil. El polimorfismo real está en las fuentes de comandos, no en los monitores — forzar un ABC habría sido complejidad sin beneficio |
+| 2026-04-02 | Crear suite de tests unitarios `tests/test_hlc.py` con pytest | Verificar regresiones sin hardware. Cubre todos los módulos excepto `VisionSource` (requiere OpenCV + cámara) |
+
+---
+
 ## Semana 1 — Fundación del proyecto (8–9 mar 2026)
 
 | Fecha | Decisión | Motivo |
