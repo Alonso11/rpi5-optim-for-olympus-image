@@ -93,3 +93,13 @@ CSP_PORT_TM   = int (_cfg.get("csp_port_tm",  10))
 CSP_PORT_CMD  = int (_cfg.get("csp_port_cmd", 11))
 CSP_PORT_HB   = int (_cfg.get("csp_port_hb",   1))
 CSP_ENABLED   = bool(_cfg.get("csp_enabled", True))
+
+# ─── Odometry (RNF-003) ───────────────────────────────────────────────────────
+# Valores TBD — calibrar con hardware real (ver LLC config.rs comentarios).
+# WHEEL_RADIUS_MM: radio de la rueda impresa PLA MAX (medir con calibrador).
+# TICKS_PER_REV:   pulsos encoder Phase-A por vuelta eje salida (NFP-5840-31ZY-EN, TBD).
+# WHEEL_BASE_MM:   distancia entre centros de contacto izq/der (track width).
+
+WHEEL_RADIUS_MM  = int  (_cfg.get("wheel_radius_mm",  50))   # TBD — calibrar
+TICKS_PER_REV    = int  (_cfg.get("ticks_per_rev",    20))   # TBD — calibrar
+WHEEL_BASE_MM    = int  (_cfg.get("wheel_base_mm",    280))  # TBD — calibrar

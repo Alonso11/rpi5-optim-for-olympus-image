@@ -22,6 +22,7 @@ from .monitors import (
     EnergyMonitor, SafeMode, SlipMonitor, ThermalMonitor, WaypointTracker,
 )
 from .msm import RoverMSM, _send
+from .odometry import OdometryTracker
 
 
 class HlcEngine:
@@ -52,6 +53,7 @@ class HlcEngine:
         self._slip        = SlipMonitor()
         self._thermal     = ThermalMonitor()
         self._safe_mode   = SafeMode()
+        self._odometry    = OdometryTracker()
         self._prev_energy  = EnergyLevel.OK
         self._prev_thermal = ThermalLevel.OK
 
@@ -183,6 +185,7 @@ class HlcEngine:
 
         self._log.log_tlm(tlm)
         self._tracker.record(tlm, self._msm.state)
+        self._odometry.update(tlm.enc_left, tlm.enc_right)
 
         # SyRS-017 — verificar frecuencia TLM ≥ 1 Hz
         now_ts      = time.monotonic()

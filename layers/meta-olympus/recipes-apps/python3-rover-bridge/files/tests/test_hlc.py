@@ -10,9 +10,12 @@ import pytest
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
+import math
+
 from olympus_hlc.models import (
     TlmFrame, Waypoint, RoverState, EnergyLevel, ThermalLevel, CommLinkState,
 )
+from olympus_hlc.odometry import OdometryTracker
 from olympus_hlc.csp import CSPPacket
 from olympus_hlc.msm import RoverMSM, DryRunRover, parse_response, _send
 from olympus_hlc.monitors import (
@@ -26,39 +29,39 @@ from olympus_hlc.engine import HlcEngine
 
 TLM_NORMAL = (
     "TLM:NORMAL:000000:12340ms:15000mV:500mA:"
-    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm"
+    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm:0:0"
 )
 TLM_CRITICAL_BATT = (
     "TLM:NORMAL:000000:1000ms:12000mV:500mA:"
-    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm"
+    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm:0:0"
 )
 TLM_WARN_BATT = (
     "TLM:NORMAL:000000:1000ms:13500mV:500mA:"
-    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm"
+    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm:0:0"
 )
 TLM_HOT = (
     "TLM:NORMAL:000000:1000ms:15000mV:500mA:"
-    "100:100:100:100:100:100:65C:25:25:25:25:25:25C:800mm"
+    "100:100:100:100:100:100:65C:25:25:25:25:25:25C:800mm:0:0"
 )
 TLM_WARM = (
     "TLM:NORMAL:000000:1000ms:15000mV:500mA:"
-    "100:100:100:100:100:100:48C:25:25:25:25:25:25C:800mm"
+    "100:100:100:100:100:100:48C:25:25:25:25:25:25C:800mm:0:0"
 )
 TLM_LLC_FAULT = (
     "TLM:FAULT:000000:1000ms:15000mV:500mA:"
-    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm"
+    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm:0:0"
 )
 TLM_STALL = (
     "TLM:NORMAL:100000:1000ms:15000mV:500mA:"
-    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:150mm"
+    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:150mm:0:0"
 )
 TLM_CLOSE = (
     "TLM:NORMAL:000000:1000ms:15000mV:500mA:"
-    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:200mm"
+    "100:100:100:100:100:100:25C:25:25:25:25:25:25C:200mm:0:0"
 )
 TLM_NO_READING = (
     "TLM:NORMAL:000000:1000ms:0mV:0mA:"
-    "0:0:0:0:0:0:0C:0:0:0:0:0:0C:0mm"
+    "0:0:0:0:0:0:0C:0:0:0:0:0:0C:0mm:0:0"
 )
 
 
@@ -83,6 +86,26 @@ class TestTlmFrame:
         assert tlm.temp_c    == 25
         assert tlm.batt_temps == [25, 25, 25, 25, 25, 25]
         assert tlm.dist_mm   == 800
+        assert tlm.enc_left  == 0
+        assert tlm.enc_right == 0
+
+    def test_parse_enc_nonzero(self):
+        raw = (
+            "TLM:NORMAL:000000:1000ms:15000mV:500mA:"
+            "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm:120:-45"
+        )
+        tlm = TlmFrame.parse(raw)
+        assert tlm is not None
+        assert tlm.enc_left  == 120
+        assert tlm.enc_right == -45
+
+    def test_parse_returns_none_old_format(self):
+        # Frame de 20 campos (sin enc) debe retornar None
+        old = (
+            "TLM:NORMAL:000000:1000ms:15000mV:500mA:"
+            "100:100:100:100:100:100:25C:25:25:25:25:25:25C:800mm"
+        )
+        assert TlmFrame.parse(old) is None
 
     def test_parse_stall_mask(self):
         tlm = parse(TLM_STALL)
@@ -575,3 +598,93 @@ class TestHlcEngine:
         HlcEngine(rover, source, "manual", log_path=str(log)).run()
         assert log.exists()
         assert log.stat().st_size > 0
+
+
+# ─── OdometryTracker ─────────────────────────────────────────────────────────
+
+class TestOdometryTracker:
+    """
+    Valida el modelo cinemático diferencial con constantes conocidas.
+    Usa TICKS_PER_REV=10, WHEEL_RADIUS_MM=100, WHEEL_BASE_MM=200
+    para hacer los cálculos verificables a mano.
+    """
+
+    def _make_tracker(self, ticks_per_rev=10, radius_mm=100, base_mm=200):
+        tracker = OdometryTracker.__new__(OdometryTracker)
+        tracker.x_mm      = 0.0
+        tracker.y_mm      = 0.0
+        tracker.theta_rad = 0.0
+        tracker._last_enc_left  = float("nan")
+        tracker._last_enc_right = float("nan")
+        tracker._mm_per_tick = (2.0 * math.pi * radius_mm) / (3.0 * ticks_per_rev)
+        tracker._wheel_base  = float(base_mm)
+        return tracker
+
+    def test_initial_pose_is_zero(self):
+        t = self._make_tracker()
+        x, y, th = t.pose()
+        assert x == 0.0 and y == 0.0 and th == 0.0
+
+    def test_first_update_only_sets_reference(self):
+        """El primer frame sólo inicializa la referencia — pose no cambia."""
+        t = self._make_tracker()
+        t.update(100, 100)
+        assert t.x_mm == 0.0 and t.y_mm == 0.0
+
+    def test_straight_forward(self):
+        """
+        Ambos lados avanzan el mismo número de ticks → movimiento recto.
+        Con ticks=10, radius=100: mm_per_tick = 2π*100/(3*10) ≈ 20.944
+        10 ticks por lado × 3 ruedas = 30 ticks totales por lado.
+        d_left = d_right = 30 * 20.944 ≈ 628.3 mm = 2π*100
+        dθ = 0 → x += 628.3, y ≈ 0.
+        """
+        t = self._make_tracker()
+        t.update(0, 0)            # frame 0 — referencia
+        t.update(30, 30)          # frame 1 — avance recto
+        expected = 2 * math.pi * 100  # una vuelta completa
+        assert abs(t.x_mm - expected) < 0.01
+        assert abs(t.y_mm) < 0.01
+        assert abs(t.theta_rad) < 1e-9
+
+    def test_spin_in_place(self):
+        """
+        Izquierda retrocede, derecha avanza igual → giro en el sitio.
+        d_center = 0, dθ = (d_right - d_left) / base.
+        Con 30 ticks derecha, -30 ticks izquierda:
+          d_right = +628.3 mm, d_left = -628.3 mm
+          dθ = 1256.6 / 200 ≈ 2π rad (vuelta completa)
+          x y deben ser ~0.
+        """
+        t = self._make_tracker()
+        t.update(0, 0)
+        t.update(-30, 30)
+        assert abs(t.x_mm) < 0.01
+        assert abs(t.y_mm) < 0.01
+        assert abs(t.theta_rad - 2 * math.pi) < 1e-6
+
+    def test_reset_clears_pose_and_reference(self):
+        t = self._make_tracker()
+        t.update(0, 0)
+        t.update(30, 30)
+        t.reset()
+        assert t.x_mm == 0.0 and t.y_mm == 0.0 and t.theta_rad == 0.0
+        # Después del reset, el siguiente update solo fija referencia
+        t.update(50, 50)
+        assert t.x_mm == 0.0
+
+    def test_incremental_updates_accumulate(self):
+        """Dos pasos de 15 ticks rectos = un paso de 30 ticks rectos."""
+        t1 = self._make_tracker()
+        t1.update(0, 0)
+        t1.update(30, 30)
+        x1, y1, _ = t1.pose()
+
+        t2 = self._make_tracker()
+        t2.update(0, 0)
+        t2.update(15, 15)
+        t2.update(30, 30)
+        x2, y2, _ = t2.pose()
+
+        assert abs(x1 - x2) < 0.01
+        assert abs(y1 - y2) < 0.01

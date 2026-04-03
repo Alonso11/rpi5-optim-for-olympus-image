@@ -1,4 +1,6 @@
 # Olympus HLC — RPi5 Yocto Image
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Systems Engineering](https://img.shields.io/badge/Focus-Systems%20Engineering-blue.svg)](#)
 
 Custom Linux image for the **Raspberry Pi 5** built with Yocto (Scarthgap).
 Acts as the High-Level Controller (HLC) of the Olympus rover, communicating with
@@ -172,4 +174,15 @@ See [docs/testing.md](docs/testing.md) for the full testing guide.
 
 ---
 
-Olympus TFG Project 2026.
+## License
+
+This project is distributed under the MIT License. See the LICENSE file for details.
+
+---
+
+## Author
+
+Fabián Alonso Gómez Quesada     
+Instituto Tecnológico de Costa Rica (TEC)        
+School of Electronics Engineering           
+SETEC Lab – Space Systems Laboratory     
