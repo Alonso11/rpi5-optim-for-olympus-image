@@ -159,6 +159,33 @@ test_rover.py                # Basic rover_bridge smoke test
 
 See [docs/testing.md](docs/testing.md) for the full testing guide.
 
+### Live vision debug (SSH pipe)
+
+Stream annotated inference frames from the RPi5 to your PC in real time:
+
+```bash
+# On your PC (requires opencv-python, not headless):
+pip install opencv-python
+
+# Bbox mode (faster):
+ssh root@<IP_RPi5> "python3 /opt/olympus/debug_vision.py --mode bbox" | python3 debug_view.py
+
+# Segmentation mode (shows masks + zone coverage):
+ssh root@<IP_RPi5> "python3 /opt/olympus/debug_vision.py --mode seg" | python3 debug_view.py
+
+# Capture N frames only:
+ssh root@<IP_RPi5> "python3 /opt/olympus/debug_vision.py --mode seg --frames 20" | python3 debug_view.py
+```
+
+`debug_vision.py` runs on the RPi5 and writes length-prefixed JPEGs to stdout.
+`debug_view.py` runs locally and displays them with `cv2.imshow`. Press `q` to quit.
+
+The annotated frame shows:
+- Vertical zone lines at 33 % / 67 % of frame width (LEFT / CENTER / RIGHT)
+- Bounding box of best detection (bbox mode) or green mask overlay (seg mode)
+- Zone coverage percentages in the ROI (seg mode)
+- Decided MSM command (green = EXP, red = AVD/RET)
+
 ---
 
 ## Documentation
