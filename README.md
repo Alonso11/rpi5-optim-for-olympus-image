@@ -146,6 +146,25 @@ Key parameters:
 
 ---
 
+## Development environment (PC)
+
+All PC-side tools and tests use [uv](https://github.com/astral-sh/uv):
+
+```bash
+cd layers/meta-olympus/recipes-apps/python3-rover-bridge/files/
+
+# Create venv and install dev deps (pytest, opencv-python, numpy)
+uv sync --dev
+
+# Run unit tests
+uv run pytest tests/ -v
+
+# Run debug_view.py (part of SSH pipe workflow — see below)
+uv run python3 debug_view.py
+```
+
+---
+
 ## Testing on the RPi5
 
 ```bash
@@ -164,8 +183,8 @@ See [docs/testing.md](docs/testing.md) for the full testing guide.
 Stream annotated inference frames from the RPi5 to your PC in real time:
 
 ```bash
-# On your PC (requires opencv-python, not headless):
-pip install opencv-python
+# On your PC — usar el entorno uv (ver sección Development environment):
+uv run python3 debug_view.py   # recibe el pipe
 
 # Bbox mode (faster):
 ssh root@<IP_RPi5> "python3 /opt/olympus/debug_vision.py --mode bbox" | python3 debug_view.py
